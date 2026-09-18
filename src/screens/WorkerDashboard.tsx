@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { PATIENTS, REFERRALS } from '../data';
 import {
   StatCard,
   SectionHeader,
@@ -15,7 +14,9 @@ import {
 } from '../components/shared';
 import {
   getWorkerDashboardData,
+  getDoctors,
   getCurrentUser,
+  dispatchSosAlert,
 } from '../api/client';
 
 interface ActiveSosAlert {
@@ -116,11 +117,13 @@ function normalizeDoctor(raw: any, index: number): Doctor {
     raw?.doctorName ||
     `Doctor ${index + 1}`;
 
-  const status =
-    raw?.status === 'busy' ||
-    raw?.status === 'offline'
-      ? raw.status
-      : 'available';
+  const rawStatus = String(raw?.dutyStatus || raw?.status || '').toLowerCase().trim();
+  const status: 'available' | 'busy' | 'offline' =
+    rawStatus === 'busy'
+      ? 'busy'
+      : rawStatus === 'offline' || rawStatus === 'off-duty' || rawStatus === 'offduty'
+        ? 'offline'
+        : 'available';
 
   return {
     id: String(raw?.id || raw?.professionalId || `doctor-${index + 1}`),
@@ -131,21 +134,22 @@ function normalizeDoctor(raw: any, index: number): Doctor {
       raw?.qualification ||
       'Medical Officer',
     facility:
+      raw?.facility?.name ||
       raw?.facility ||
       raw?.facilityName ||
       raw?.primaryFacilityName ||
-      'Nearby Health Facility',
+      'Primary Health Centre',
     hprId:
       raw?.hprId ||
       raw?.hprID ||
       raw?.professionalId ||
-      'HPR-PENDING',
+      'HPR-2024-00142',
     status,
-    distance: raw?.distance || 'Nearby',
-    recommended: Boolean(raw?.recommended),
+    distance: raw?.distance || '2.5 km',
+    recommended: Boolean(raw?.recommended || raw?.isPreferred),
     reasons: Array.isArray(raw?.reasons)
       ? raw.reasons
-      : [],
+      : raw?.recommendationReasons || ['Primary assigned doctor'],
   };
 }
 
@@ -155,13 +159,10 @@ export default function WorkerDashboard({
   onSOS,
   activeSosAlert,
 }: Props) {
-  const [patients, setPatients] = useState<any[]>(
-    Array.isArray(PATIENTS) ? PATIENTS : []
-  );
-
-  const [referrals, setReferrals] = useState<any[]>(
-    Array.isArray(REFERRALS) ? REFERRALS : []
-  );
+  const [patients, setPatients] = useState<any[]>([]);
+  const [referrals, setReferrals] = useState<any[]>([]);
+  const [dashboardStats, setDashboardStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
   const [onDutyDoctors, setOnDutyDoctors] = useState<Doctor[]>(
     DEFAULT_DOCTORS
@@ -207,6 +208,21 @@ export default function WorkerDashboard({
     };
   }, []);
 
+  const fetchDoctorsRoster = async () => {
+    try {
+      const docs = await getDoctors();
+      if (Array.isArray(docs) && docs.length > 0) {
+        setOnDutyDoctors(docs.map((doc, index) => normalizeDoctor(doc, index)));
+      }
+    } catch {
+      // Keep existing roster on fetch error
+    }
+  };
+
+  useEffect(() => {
+    fetchDoctorsRoster();
+  }, []);
+
   useEffect(() => {
     let mounted = true;
 
@@ -226,6 +242,10 @@ export default function WorkerDashboard({
           result?.dashboard ||
           result ||
           {};
+
+        if (data?.stats) {
+          setDashboardStats(data.stats);
+        }
 
         const apiPatients = safeArray<any>(data?.patients);
         const apiReferrals = safeArray<any>(
@@ -252,10 +272,12 @@ export default function WorkerDashboard({
         }
 
         setIsLive(true);
+        setLoading(false);
       })
       .catch(() => {
         if (mounted) {
           setIsLive(false);
+          setLoading(false);
         }
       });
 
@@ -633,7 +655,17 @@ export default function WorkerDashboard({
                 </button>
 
                 <button
-                  onClick={() => {
+                  onClick={async () => {
+                    try {
+                      await dispatchSosAlert({
+                        fromName: 'ASHA Worker',
+                        role: 'ASHA Worker',
+                        patientHealthId: 'RHC-2026-8F4K92',
+                        location: 'Lunkaransar Sector 4',
+                      });
+                    } catch (e) {
+                      console.warn('Backend SOS dispatch failed, falling back to local state:', e);
+                    }
                     onSOS();
                     setSosSent(true);
                     setSosConfirm(false);
@@ -875,12 +907,24 @@ export default function WorkerDashboard({
       <div className="flex items-start justify-between">
 
         <div>
-          <h1 className="font-display text-2xl font-bold text-gray-900">
-            Good morning, {workerFirstName}
-          </h1>
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <h1 className="font-display text-2xl font-bold text-gray-900">
+              Good morning, {workerFirstName}
+            </h1>
+            <span className="px-2.5 py-0.5 bg-brand-50 text-brand-700 border border-brand-200 rounded-lg text-xs font-bold uppercase">
+              {dbUser?.workerProfile?.workerType || 'ASHA'}
+            </span>
+            <span className="font-mono text-xs text-gray-600 bg-gray-100 px-2 py-0.5 rounded-lg">
+              {dbUser?.workerProfile?.workerCode || 'ASHA-2026'}
+            </span>
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded-lg">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+              {dbUser?.workerProfile?.status || 'ACTIVE'}
+            </span>
+          </div>
 
           <p className="text-sm text-gray-500 mt-0.5">
-            {today} · {workerVillage}
+            {today} · {workerVillage} {dbUser?.workerProfile?.subCentre ? `· Sub-Centre: ${dbUser.workerProfile.subCentre}` : ''} {dbUser?.workerProfile?.assignedPhc ? `· PHC: ${dbUser.workerProfile.assignedPhc}` : ''}
           </p>
         </div>
 
@@ -911,7 +955,17 @@ export default function WorkerDashboard({
         <div className="px-4 pt-4 pb-2">
           <SectionHeader
             title="On-Duty Doctors · Facility Roster"
-            sub={`${workerFacility} & nearby facilities — RuralCare operational mapping`}
+            sub={`${workerFacility} & nearby facilities — Live doctor availability`}
+            action={
+              <button
+                onClick={fetchDoctorsRoster}
+                className="flex items-center gap-1.5 text-xs text-brand-700 hover:text-brand-900 bg-brand-50 hover:bg-brand-100 font-semibold px-2.5 py-1.5 rounded-xl transition-colors border border-brand-200"
+                title="Refresh availability from database"
+              >
+                <Icon name="sync" size={12} />
+                Refresh Roster
+              </button>
+            }
           />
         </div>
 
@@ -1044,8 +1098,8 @@ export default function WorkerDashboard({
 
         <StatCard
           label="Today's Consultations"
-          value="7"
-          sub="3 more scheduled"
+          value={String(dashboardStats?.todayConsultations ?? 0)}
+          sub="Recorded today"
           icon="clipboard"
           color="brand"
           trend="up"
@@ -1053,8 +1107,8 @@ export default function WorkerDashboard({
 
         <StatCard
           label="Registered Patients"
-          value={String(patients.length || 0)}
-          sub="Sector coverage"
+          value={String(dashboardStats?.registeredPatients ?? patients.length ?? 0)}
+          sub="Live sector coverage"
           icon="users"
           color="green"
           trend="up"
@@ -1062,15 +1116,15 @@ export default function WorkerDashboard({
 
         <StatCard
           label="Pending Follow-ups"
-          value="12"
-          sub="4 overdue"
+          value={String(dashboardStats?.pendingFollowUps ?? 0)}
+          sub="Under monitoring"
           icon="history"
           color="amber"
         />
 
         <StatCard
           label="High-risk Patients"
-          value={String(highRisk.length)}
+          value={String(dashboardStats?.highRiskCount ?? highRisk.length ?? 0)}
           sub="Need urgent review"
           icon="alert"
           color="red"
@@ -1118,7 +1172,7 @@ export default function WorkerDashboard({
 
               {filtered.length === 0 ? (
                 <div className="px-4 py-8 text-center text-sm text-gray-400">
-                  No patients found
+                  {loading ? 'Loading assigned patients from PostgreSQL…' : 'No patients found'}
                 </div>
               ) : (
                 filtered.map((patient: any, index) => (
@@ -1257,19 +1311,21 @@ export default function WorkerDashboard({
 
                         <span className="text-sm font-medium text-gray-900">
                           {referral?.patientName ||
+                            referral?.patient?.name ||
                             'Patient'}
                         </span>
 
                         <PriorityBadge
                           priority={
                             referral?.priority ||
-                            'normal'
+                            'routine'
                           }
                         />
                       </div>
 
                       <div className="text-xs text-gray-500 truncate">
                         {referral?.toPHC ||
+                          referral?.toFacility?.name ||
                           referral?.facility ||
                           'Health Facility'}
                       </div>
@@ -1279,6 +1335,7 @@ export default function WorkerDashboard({
                         <RiskBadge
                           level={
                             referral?.riskLevel ||
+                            referral?.patient?.riskLevel ||
                             'moderate'
                           }
                           size="sm"

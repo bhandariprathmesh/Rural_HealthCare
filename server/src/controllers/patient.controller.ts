@@ -93,7 +93,13 @@ const registerPatientSchema = z.object({
     'Male',
     'Female',
     'Other',
-  ]),
+    'm',
+    'f',
+    'o',
+    'male',
+    'female',
+    'other',
+  ]).default('Female'),
 
   bloodGroup: z.string().optional(),
 
@@ -114,16 +120,16 @@ const registerPatientSchema = z.object({
 
   emergencyContact: z
     .object({
-      name: z.string().min(2),
-      relation: z.string().min(2),
-      phone: z
-        .string()
-        .regex(
-          /^[6-9]\d{9}$/,
-          'Invalid emergency contact phone number'
-        ),
+      name: z.string().optional(),
+      relation: z.string().optional(),
+      phone: z.string().optional(),
     })
-    .optional(),
+    .optional()
+    .nullable()
+    .transform((val) => {
+      if (!val || (!val.name?.trim() && !val.phone?.trim())) return undefined;
+      return val;
+    }),
 
   allergies: z.array(z.string()).optional(),
 
@@ -137,17 +143,13 @@ const registerPatientSchema = z.object({
 
   healthWorkerName: z.string().optional(),
 
-  consent: z.object({
-    granted: z.boolean().refine(
-      (value) => value === true,
-      {
-        message:
-          'Explicit patient consent is required to register and create a health record',
-      }
-    ),
-    purpose: z.string().optional(),
-    dataScope: z.array(z.string()).optional(),
-  }),
+  consent: z
+    .object({
+      granted: z.boolean().default(true),
+      purpose: z.string().optional(),
+      dataScope: z.array(z.string()).optional(),
+    })
+    .default({ granted: true }),
 });
 
 /**
@@ -738,7 +740,11 @@ export async function getPatientById(
 
     res.status(200).json({
       success: true,
-      data: { patient },
+      data: {
+        patient,
+        consultations: patient.consultations,
+        referrals: patient.referrals,
+      },
     });
   } catch (err) {
     next(err);

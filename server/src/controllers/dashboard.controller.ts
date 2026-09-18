@@ -133,6 +133,7 @@ export async function getWorkerDashboard(_req: Request, res: Response, next: Nex
       highRiskCount,
       pendingReferralsCount,
       consultationsCount,
+      pendingFollowUpsCount,
     ] = await Promise.all([
       prisma.patient.findMany({
         orderBy: { createdAt: 'desc' },
@@ -152,6 +153,7 @@ export async function getWorkerDashboard(_req: Request, res: Response, next: Nex
       prisma.patient.count({ where: { riskLevel: { in: ['HIGH', 'CRITICAL'] } } }),
       prisma.referral.count({ where: { status: 'PENDING' } }),
       prisma.consultation.count(),
+      prisma.consultation.count({ where: { followUpDate: { not: null } } }),
     ]);
 
     const highRiskPatients = patients.filter(
@@ -165,23 +167,32 @@ export async function getWorkerDashboard(_req: Request, res: Response, next: Nex
       facility: d.facility?.name || 'Primary Health Centre',
       hprId: d.hprId,
       status: d.dutyStatus.toLowerCase() as 'available' | 'busy' | 'offline',
+      dutyStatus: d.dutyStatus,
       distance: d.distance || '3.5 km',
       recommended: d.isPreferred,
       reasons: d.recommendationReasons || ['Primary assigned doctor'],
+    }));
+
+    const mappedReferrals = referrals.map(r => ({
+      ...r,
+      priority: (r.priority || 'ROUTINE').toLowerCase(),
+      status: (r.status || 'PENDING').toLowerCase().replace(/_/g, '-'),
+      riskLevel: (r.riskLevel || 'LOW').toLowerCase(),
     }));
 
     res.status(200).json({
       success: true,
       data: {
         stats: {
-          todayConsultations: Math.max(7, consultationsCount),
-          registeredPatients: Math.max(156, totalPatientsCount),
-          pendingFollowUps: 12,
-          highRiskCount: Math.max(highRiskPatients.length, highRiskCount),
+          todayConsultations: consultationsCount,
+          registeredPatients: totalPatientsCount,
+          pendingFollowUps: pendingFollowUpsCount,
+          highRiskCount: highRiskCount,
         },
         patients,
         highRiskPatients,
-        referrals,
+        referrals: mappedReferrals,
+        pendingReferrals: mappedReferrals.filter(r => r.status === 'pending'),
         onDutyDoctors,
       },
     });
@@ -194,14 +205,21 @@ export async function getWorkerDashboard(_req: Request, res: Response, next: Nex
  * Doctor Dashboard Data.
  * GET /api/v1/dashboards/doctor
  */
-export async function getDoctorDashboard(_req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function getDoctorDashboard(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    const requestedDoctorId = typeof req.query.doctorId === 'string' ? req.query.doctorId : undefined;
+
     const [
       patients,
       referrals,
       sosAlerts,
       doctors,
       consultationsCount,
+      recentConsultations,
+      followUpsList,
+      totalPatientsCount,
+      pendingFollowUpsCount,
+      highRiskCount,
     ] = await Promise.all([
       prisma.patient.findMany({
         orderBy: { createdAt: 'desc' },
@@ -221,27 +239,101 @@ export async function getDoctorDashboard(_req: Request, res: Response, next: Nex
         orderBy: { isPreferred: 'desc' },
       }),
       prisma.consultation.count(),
+      prisma.consultation.findMany({
+        orderBy: { createdAt: 'desc' },
+        include: { patient: true },
+        take: 10,
+      }),
+      prisma.consultation.findMany({
+        where: { followUpDate: { not: null } },
+        include: { patient: true },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      }),
+      prisma.patient.count(),
+      prisma.consultation.count({ where: { followUpDate: { not: null } } }),
+      prisma.patient.count({ where: { riskLevel: { in: ['HIGH', 'CRITICAL'] } } }),
     ]);
 
     const roster = doctors.map(d => ({
+      id: d.id,
       name: d.name,
       specialty: d.specialty,
       hprId: d.hprId,
-      status: d.dutyStatus,
-      facility: d.facility.name,
+      status: d.dutyStatus.toLowerCase(),
+      dutyStatus: d.dutyStatus,
+      facility: d.facility?.name || 'Primary Health Centre',
+    }));
+
+    const mappedReferrals = referrals.map(r => ({
+      ...r,
+      priority: (r.priority || 'ROUTINE').toLowerCase(),
+      status: (r.status || 'PENDING').toLowerCase().replace(/_/g, '-'),
+      riskLevel: (r.riskLevel || 'LOW').toLowerCase(),
+    }));
+
+    let primaryDoctor = doctors[0] || null;
+    if (requestedDoctorId) {
+      const specificDoctor = await prisma.doctor.findFirst({
+        where: {
+          OR: [
+            { id: requestedDoctorId },
+            { userId: requestedDoctorId },
+            { hprId: requestedDoctorId },
+          ],
+        },
+        include: { facility: true },
+      });
+      if (specificDoctor) {
+        primaryDoctor = specificDoctor;
+      }
+    }
+
+    const mappedConsultations = recentConsultations.map(c => ({
+      id: c.id,
+      code: c.consultationCode,
+      time: c.time || '09:30 AM',
+      patientId: c.patientId,
+      name: c.patient?.name || 'Patient',
+      ag: c.patient?.age ? `${c.patient.age}${c.patient.gender?.[0] || 'M'}` : '45M',
+      purpose: c.diagnosis || (c.symptoms.length > 0 ? c.symptoms.join(', ') : 'General Consultation'),
+      risk: (c.riskLevel || 'LOW').toLowerCase(),
+      status: c.diagnosis ? 'Completed' : 'Waiting',
+      date: c.date,
+    }));
+
+    const mappedFollowUps = followUpsList.map(f => ({
+      id: f.id,
+      patientId: f.patientId,
+      name: f.patient?.name || 'Patient',
+      date: f.followUpDate || f.date,
+      type: f.diagnosis || (f.symptoms.length > 0 ? f.symptoms[0] : 'Clinical follow-up'),
     }));
 
     res.status(200).json({
       success: true,
       data: {
         stats: {
-          activePatients: Math.max(42, patients.length),
+          activePatients: totalPatientsCount,
           pendingReviews: referrals.length,
           emergencySos: sosAlerts.length,
-          teleconsultsToday: Math.max(6, consultationsCount),
+          teleconsultsToday: consultationsCount,
+          highRiskCount: highRiskCount,
+          pendingFollowUps: pendingFollowUpsCount,
         },
         patients,
-        pendingReferrals: referrals,
+        referrals: mappedReferrals,
+        pendingReferrals: mappedReferrals,
+        consultations: mappedConsultations,
+        followUps: mappedFollowUps,
+        doctor: primaryDoctor ? {
+          id: primaryDoctor.id,
+          name: primaryDoctor.name,
+          specialty: primaryDoctor.specialty,
+          dutyStatus: primaryDoctor.dutyStatus,
+          hprId: primaryDoctor.hprId,
+          facility: primaryDoctor.facility,
+        } : null,
         sosAlerts,
         dutyRoster: roster,
       },

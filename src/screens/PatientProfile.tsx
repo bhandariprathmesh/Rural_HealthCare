@@ -13,6 +13,7 @@ import {
 } from '../components/shared';
 import {
   getPatientByHealthId,
+  getPatients,
   getCurrentUser,
 } from '../api/client';
 
@@ -71,7 +72,23 @@ export default function PatientProfile({
               )
             );
           } else {
-            setPatient(fallbackFor(patientId));
+            const patientList = await getPatients().catch(() => []);
+            if (patientList && patientList.length > 0) {
+              const firstId = patientList[0].healthId || patientList[0].id;
+              const res = await getPatientByHealthId(firstId).catch(() => null);
+              if (res?.patient) {
+                setPatient({
+                  ...res.patient,
+                  id: res.patient.healthId || res.patient.id,
+                });
+                setConsultations(
+                  mapConsultations(res.consultations, res.patient)
+                );
+                setReferrals(
+                  mapReferrals(res.referrals, res.patient)
+                );
+              }
+            }
           }
         } else {
           // Patient viewing their own profile
@@ -119,31 +136,28 @@ export default function PatientProfile({
               );
             }
           } else {
-            setPatient(PATIENTS[0]);
-
-            setConsultations(
-              CONSULTATIONS.filter(
-                (c) =>
-                  c.patientId ===
-                  PATIENTS[0].id
-              )
-            );
-
-            setReferrals(
-              REFERRALS.filter(
-                (r) =>
-                  r.patientId ===
-                  PATIENTS[0].id
-              )
-            );
+            const patientList = await getPatients().catch(() => []);
+            if (patientList && patientList.length > 0) {
+              const firstId = patientList[0].healthId || patientList[0].id;
+              const res = await getPatientByHealthId(firstId).catch(() => null);
+              if (res?.patient) {
+                setPatient({
+                  ...res.patient,
+                  id: res.patient.healthId || res.patient.id,
+                });
+                setConsultations(
+                  mapConsultations(res.consultations, res.patient)
+                );
+                setReferrals(
+                  mapReferrals(res.referrals, res.patient)
+                );
+              }
+            }
           }
         }
       } catch {
-        setPatient(
-          patientId
-            ? fallbackFor(patientId)
-            : PATIENTS[0]
-        );
+        // Handle error safely without mock fallback
+        setPatient(null);
       } finally {
         setLoading(false);
       }
@@ -238,10 +252,15 @@ export default function PatientProfile({
         p?.name,
 
       fromWorker:
-        r.fromWorkerName,
+        r.fromWorker ||
+        r.fromWorkerName ||
+        'Meena Kumari (ASHA)',
 
       toPHC:
-        r.toFacilityName,
+        r.toPHC ||
+        r.toFacility?.name ||
+        r.toFacilityName ||
+        'Primary Health Centre',
 
       reason:
         r.reason,
@@ -251,20 +270,18 @@ export default function PatientProfile({
           'low') as any,
 
       status:
-        (r.status?.toLowerCase() ||
+        (r.status?.toLowerCase().replace(/_/g, '-') ||
           'pending') as any,
 
       date:
-        new Date(
-          r.createdAt
-        ).toLocaleDateString(
-          'en-GB',
-          {
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
-          }
-        ),
+        r.date ||
+        (r.createdAt
+          ? new Date(r.createdAt).toLocaleDateString('en-GB', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+            })
+          : 'Recent'),
 
       priority:
         (r.priority?.toLowerCase() ||

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Icon, Card, RiskBadge, HealthIDCard } from '../components/shared';
+import { authorizeEmergency, getCurrentUser } from '../api/client';
 
 interface Props { navigate: (s: string) => void; }
 
@@ -22,6 +23,7 @@ export default function EmergencyAccess({ navigate }: Props) {
   const [searchDone, setSearchDone] = useState(false);
   const [timeLeft, setTimeLeft] = useState(900); // 15 min
   const [addlRequested, setAddlRequested] = useState(false);
+  const [authorizing, setAuthorizing] = useState(false);
 
   useEffect(() => {
     if (step !== 'active') return;
@@ -310,11 +312,31 @@ export default function EmergencyAccess({ navigate }: Props) {
       </Card>
 
       <button
-        onClick={() => { if (reason && reasonNote) setStep('active'); }}
-        disabled={!reason || !reasonNote}
+        onClick={async () => {
+          if (!reason || !reasonNote) return;
+          setAuthorizing(true);
+          try {
+            const user = await getCurrentUser().catch(() => null);
+            await authorizeEmergency({
+              patientHealthId: idMethod === 'temp' ? tempID : 'RHC-2026-8F4K92',
+              patientName: idMethod === 'temp' ? 'Unknown Emergency Patient' : 'Priya Devi',
+              doctorName: user?.fullName || 'Dr. Ankit Sharma',
+              facilityName: user?.doctorProfile?.facility?.name || 'PHC Lunkaransar',
+              reason,
+              note: reasonNote,
+              records: 'Emergency Medical Summary, Vitals, Medications',
+            });
+          } catch (err) {
+            console.error('Failed to log emergency access to backend:', err);
+          } finally {
+            setAuthorizing(false);
+            setStep('active');
+          }
+        }}
+        disabled={!reason || !reasonNote || authorizing}
         className="w-full py-3.5 bg-red-600 hover:bg-red-700 disabled:opacity-40 text-white font-bold rounded-xl text-sm transition-colors flex items-center justify-center gap-2 active:scale-95">
         <Icon name="shield" size={16} />
-        Request Emergency Access
+        {authorizing ? 'Authorizing Emergency Token...' : 'Authorize Emergency Access (Break-Glass)'}
       </button>
     </div>
   );

@@ -232,14 +232,26 @@ export async function updateDutyStatus(req: Request, res: Response, next: NextFu
     const rawId = req.params.id;
     const id = Array.isArray(rawId) ? rawId[0] : rawId;
 
+    const rawInput = req.body.dutyStatus || req.body.status;
     const { status } = z.object({
       status: z.enum(['AVAILABLE', 'BUSY', 'OFFLINE', 'available', 'busy', 'offline']),
-    }).parse(req.body);
+    }).parse({ status: rawInput });
 
     const normalizedStatus = status.toUpperCase() as DutyStatus;
 
-    const doctor = await prisma.doctor.update({
-      where: { id },
+    // Support updating by doctor ID or by userId
+    let doctor = await prisma.doctor.findFirst({
+      where: {
+        OR: [{ id }, { userId: id }],
+      },
+    });
+
+    if (!doctor) {
+      throw new AppError(`Doctor '${id}' not found`, 404);
+    }
+
+    doctor = await prisma.doctor.update({
+      where: { id: doctor.id },
       data: {
         dutyStatus: normalizedStatus,
       },

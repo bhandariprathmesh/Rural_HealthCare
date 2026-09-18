@@ -360,17 +360,12 @@ const referralConfig: Record<
 export function ReferralBadge({
   status,
 }: {
-  status: ReferralStatus;
+  status: ReferralStatus | string | null | undefined;
 }) {
-  const c = referralConfig[status];
-
-  if (!c) {
-    return (
-      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
-        Unknown
-      </span>
-    );
-  }
+  const normalized = String(status || 'pending')
+    .toLowerCase()
+    .replace(/_/g, '-') as ReferralStatus;
+  const c = referralConfig[normalized] || referralConfig.pending;
 
   return (
     <span
@@ -674,8 +669,16 @@ export function PatientRow({
 export function PriorityBadge({
   priority,
 }: {
-  priority: 'routine' | 'urgent' | 'emergency';
+  priority?: 'routine' | 'urgent' | 'emergency' | string | null;
 }) {
+  const normalized = String(priority || 'routine').toLowerCase().trim();
+  const key: 'routine' | 'urgent' | 'emergency' =
+    normalized === 'urgent'
+      ? 'urgent'
+      : normalized === 'emergency' || normalized === 'critical'
+        ? 'emergency'
+        : 'routine';
+
   const config = {
     routine: {
       label: 'Routine',
@@ -696,7 +699,7 @@ export function PriorityBadge({
     },
   };
 
-  const c = config[priority];
+  const c = config[key] || config.routine;
 
   return (
     <span
@@ -957,8 +960,16 @@ export function HFRBadge({
 export function DutyStatusBadge({
   status,
 }: {
-  status: 'available' | 'busy' | 'offline';
+  status: 'available' | 'busy' | 'offline' | string | null | undefined;
 }) {
+  const normalized = String(status || 'available').toLowerCase().trim();
+  const key: 'available' | 'busy' | 'offline' =
+    normalized === 'busy'
+      ? 'busy'
+      : normalized === 'offline' || normalized === 'off-duty' || normalized === 'offduty'
+        ? 'offline'
+        : 'available';
+
   const cfg = {
     available: {
       label: 'Available',
@@ -975,22 +986,14 @@ export function DutyStatusBadge({
     },
 
     offline: {
-      label: 'Offline',
+      label: 'Off Duty',
       dot: 'bg-gray-400',
       text: 'text-gray-600',
       bg: 'bg-gray-50 border-gray-200',
     },
   };
 
-  const c = cfg[status];
-
-  if (!c) {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 border rounded text-[10px] font-semibold bg-gray-50 border-gray-200 text-gray-600">
-        Unknown
-      </span>
-    );
-  }
+  const c = cfg[key];
 
   return (
     <span
@@ -998,7 +1001,7 @@ export function DutyStatusBadge({
     >
       <span
         className={`w-1.5 h-1.5 rounded-full ${c.dot} shrink-0 ${
-          status === 'available'
+          key === 'available'
             ? 'animate-pulse'
             : ''
         }`}

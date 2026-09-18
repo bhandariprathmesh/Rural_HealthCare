@@ -3,7 +3,7 @@ import { Icon, HealthIDCard } from '../components/shared';
 import { patients, getToken } from '../imports/api';
 import { validateAadhaar } from '../utils/aadhaarValidator';
 
-interface Props { navigate: (s: string) => void; isOffline: boolean; }
+interface Props { navigate: (s: string, patientId?: string) => void; isOffline: boolean; }
 
 const STEPS = ['Personal Info', 'Contact & Location', 'Medical Info', 'Health ID'];
 
@@ -12,10 +12,12 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
   const [form, setForm] = useState({
     name: '', nameHi: '', dob: '', gender: '', blood: '', phone: '',
     aadhaar: '', abhaAddress: '', abhaNumber: '',
+    name: '', nameHi: '', dob: '', gender: 'Female', blood: '', phone: '',
     village: '', district: 'Bikaner', state: 'Rajasthan', address: '',
     emergencyName: '', emergencyRelation: '', emergencyPhone: '',
     allergies: '', conditions: '', medications: '',
   });
+  const [consentGiven, setConsentGiven] = useState(true);
   const [generatedId, setGeneratedId] = useState('');
   const [registeredPatient, setRegisteredPatient] = useState<any>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -24,8 +26,16 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
   function update(key: string, val: string) { setForm(f => ({ ...f, [key]: val })); }
 
   async function handleSubmit() {
+    if(!form.name.trim() || !form.dob.trim() || !form.phone.trim() || !form.village.trim()) {
+      setError("Please fill out all required fields marked with *.");
+      return;
+    }
     if(!form.allergies.trim() || !form.conditions.trim() || !form.medications.trim()) {
       setError("Please fill out all mandatory medical info. Enter 'None' if applicable.");
+      return;
+    }
+    if(!consentGiven) {
+      setError("Patient consent is required to register and create a health record.");
       return;
     }
     setIsSubmitting(true);
@@ -53,7 +63,34 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
         abhaAddress: form.abhaAddress.trim() || undefined,
         abhaNumber: form.abhaNumber.trim() || undefined,
         consent: { granted: true },
+      const payload: any = {
+        name: form.name.trim(),
+        nameHi: form.nameHi.trim() || undefined,
+        dob: form.dob,
+        gender: form.gender || 'Female',
+        bloodGroup: form.blood || undefined,
+        phone: form.phone.trim(),
+        village: form.village.trim(),
+        district: form.district.trim() || 'Bikaner',
+        state: form.state.trim() || 'Rajasthan',
+        address: form.address.trim() || undefined,
+        allergies: form.allergies ? form.allergies.split(',').map(s => s.trim()).filter(Boolean) : [],
+        chronicConditions: form.conditions ? form.conditions.split(',').map(s => s.trim()).filter(Boolean) : [],
+        currentMedications: form.medications ? form.medications.split(',').map(s => s.trim()).filter(Boolean) : [],
+        consent: {
+          granted: consentGiven,
+          purpose: 'Care delivery and longitudinal health record',
+          dataScope: ['demographics', 'vitals', 'clinical_notes', 'prescriptions'],
+        },
       };
+
+      if (form.emergencyName.trim() && form.emergencyPhone.trim()) {
+        payload.emergencyContact = {
+          name: form.emergencyName.trim(),
+          relation: form.emergencyRelation.trim() || 'Relative',
+          phone: form.emergencyPhone.trim(),
+        };
+      }
       
       const res = await patients.register(payload, getToken() || undefined);
       const newPatient = res?.data?.patient;
@@ -247,7 +284,12 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
                     By registering, the patient agrees that their health information will be securely stored and can be accessed only by authorized healthcare providers with their explicit consent. Patient can revoke access at any time.
                   </p>
                   <label className="flex items-center gap-2 mt-2 cursor-pointer">
-                    <input type="checkbox" defaultChecked className="w-4 h-4 rounded accent-blue-600" />
+                    <input
+                      type="checkbox"
+                      checked={consentGiven}
+                      onChange={e => setConsentGiven(e.target.checked)}
+                      className="w-4 h-4 rounded accent-blue-600"
+                    />
                     <span className="text-xs font-medium text-blue-800">Patient has given verbal/written consent</span>
                   </label>
                 </div>
@@ -276,6 +318,11 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
 
             <div className="flex justify-center">
               <HealthIDCard id={generatedId} name={registeredPatient?.name || form.name} size="lg" />
+              <p className="text-sm text-gray-500 mt-1">{form.name || 'Patient'} has been registered in the system.</p>
+            </div>
+
+            <div className="flex justify-center">
+              <HealthIDCard id={generatedId} name={form.name || 'Patient'} size="lg" />
             </div>
 
             {isOffline && (
@@ -311,6 +358,7 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
             </div>
 
             <button onClick={() => navigate('patient-profile', registeredPatient?.id || registeredPatient?.healthId || generatedId)}
+            <button onClick={() => navigate('patient-profile', generatedId)}
               className="w-full py-3 bg-brand-600 hover:bg-brand-700 text-white font-semibold rounded-xl transition-colors">
               View Patient Profile
             </button>

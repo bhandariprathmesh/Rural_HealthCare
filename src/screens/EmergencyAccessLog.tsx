@@ -1,4 +1,6 @@
+import { useState, useEffect } from 'react';
 import { Icon, Card, SectionHeader } from '../components/shared';
+import { getEmergencyLogs } from '../api/client';
 
 interface Props { navigate: (s: string) => void; }
 
@@ -51,6 +53,40 @@ const LOG_ENTRIES = [
 ];
 
 export default function EmergencyAccessLog({ navigate }: Props) {
+  const [logs, setLogs] = useState<any[]>(LOG_ENTRIES);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadLogs() {
+      try {
+        const fetched = await getEmergencyLogs();
+        if (fetched && fetched.length > 0) {
+          const mapped = fetched.map((f: any) => ({
+            id: f.logCode || f.id,
+            patient: f.patientName || 'Unknown Patient',
+            patientId: f.patientHealthId || 'N/A',
+            doctor: f.doctorName || 'Attending Physician',
+            facility: f.facilityName || 'Emergency Center',
+            reason: f.reason || 'Emergency Care',
+            note: f.note || 'No clinical note provided',
+            started: f.started || new Date(f.createdAt).toLocaleString('en-IN'),
+            ended: f.ended || '15 min session',
+            duration: f.duration || '15 min',
+            records: f.records || 'Emergency Medical Summary',
+            addlRequested: f.addlRequested || false,
+            status: f.status || 'Active',
+          }));
+          setLogs(mapped);
+        }
+      } catch (e) {
+        console.error('Failed to load emergency logs, showing offline records:', e);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadLogs();
+  }, []);
+
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-5">
       <div className="flex items-center gap-3">
@@ -69,7 +105,10 @@ export default function EmergencyAccessLog({ navigate }: Props) {
       </div>
 
       <div className="space-y-4">
-        {LOG_ENTRIES.map(entry => (
+        {loading && (
+          <div className="text-center py-6 text-xs text-gray-500">Loading audit trail...</div>
+        )}
+        {logs.map(entry => (
           <Card key={entry.id} className="overflow-hidden">
             {/* Status bar */}
             <div className="bg-red-50 border-b border-red-100 px-5 py-2.5 flex items-center justify-between">

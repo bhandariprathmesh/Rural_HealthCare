@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Role } from './types';
 import { Icon, OfflineIndicator } from './components/shared';
-import { getCurrentUser, getToken, clearToken } from './api/client';
+import { getCurrentUser, getToken, clearToken, dispatchSosAlert } from './api/client';
 
 import LoginScreen from './screens/LoginScreen';
 import WorkerDashboard from './screens/WorkerDashboard';
@@ -470,6 +470,15 @@ export default function App() {
       },
       ...alerts,
     ]);
+
+    if (!isOffline) {
+      dispatchSosAlert({
+        fromName: from,
+        role: fromRole,
+        patientHealthId: patientId || 'RHC-EMERGENCY',
+        location,
+      }).catch((err) => console.warn('SOS broadcast error:', err));
+    }
   }
 
   function dismissSOS(id: string) {
@@ -1044,6 +1053,9 @@ export default function App() {
             <DoctorPatientView
               navigate={
                 navigate
+              }
+              patientId={
+                selectedPatientId
               }
             />
           )}

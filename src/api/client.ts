@@ -108,11 +108,10 @@ async function request<T>(
     }
 
     if (!res.ok) {
-      throw new Error(
-        json.message ||
-          json.errors?.[0]?.message ||
-          `Request failed with status ${res.status}`
-      );
+      const detailedMsg = json.errors?.length
+        ? `${json.message || 'Validation failed'}: ${json.errors.map((e: any) => `${e.path} (${e.message})`).join(', ')}`
+        : json.message || json.errors?.[0]?.message || `Request failed with status ${res.status}`;
+      throw new Error(detailedMsg);
     }
 
     return json;
@@ -689,13 +688,34 @@ export async function createConsultation(
   return res.data;
 }
 
+export async function updateConsultation(
+  id: string,
+  payload: Partial<CreateConsultationPayload>
+): Promise<any> {
+  const res =
+    await request<
+      ApiResponse<{
+        consultation: any;
+      }>
+    >(`/consultations/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+
+  return res.data;
+}
+
 // ─── Referrals ───────────────────────────────────────────────────────────────
 
 export interface CreateReferralPayload {
   patientId: string;
   consultationId?: string;
+  fromWorkerId?: string;
   fromWorkerName?: string;
-  toFacilityName: string;
+  fromWorker?: string;
+  toFacilityId?: string;
+  toFacilityName?: string;
+  toPHC?: string;
   reason: string;
   priority?:
     | 'routine'
@@ -706,17 +726,18 @@ export interface CreateReferralPayload {
     | 'moderate'
     | 'high'
     | 'critical';
+  notes?: string;
   aiSummary?: string;
 }
 
 export async function getReferrals(
-  patientId?: string
+  patientId?: string,
+  status?: string
 ): Promise<any[]> {
-  const query = patientId
-    ? `?patientId=${encodeURIComponent(
-        patientId
-      )}`
-    : '';
+  const params = new URLSearchParams();
+  if (patientId) params.append('patientId', patientId);
+  if (status && status !== 'all') params.append('status', status);
+  const query = params.toString() ? `?${params.toString()}` : '';
 
   const res =
     await request<
@@ -726,6 +747,28 @@ export async function getReferrals(
     >(`/referrals${query}`);
 
   return res.data?.referrals || [];
+}
+
+export async function getReferralFacilities(): Promise<any[]> {
+  const res =
+    await request<
+      ApiResponse<{
+        facilities: any[];
+      }>
+    >('/referrals/facilities');
+
+  return res.data?.facilities || [];
+}
+
+export async function getReferralWorkers(): Promise<any[]> {
+  const res =
+    await request<
+      ApiResponse<{
+        workers: any[];
+      }>
+    >('/referrals/workers');
+
+  return res.data?.workers || [];
 }
 
 export async function createReferral(
@@ -881,10 +924,11 @@ export async function getWorkerDashboardData(): Promise<any> {
   return res.data;
 }
 
-export async function getDoctorDashboardData(): Promise<any> {
+export async function getDoctorDashboardData(doctorId?: string): Promise<any> {
+  const query = doctorId ? `?doctorId=${encodeURIComponent(doctorId)}` : '';
   const res =
     await request<ApiResponse<any>>(
-      '/dashboards/doctor'
+      `/dashboards/doctor${query}`
     );
 
   return res.data;
@@ -899,6 +943,70 @@ export async function getPatientDashboardData(
         healthId
       )}`
     );
+
+  return res.data;
+}
+
+// ─── Emergency & Break-Glass (T3 Tier) ──────────────────────────────────────
+
+export interface AuthorizeEmergencyPayload {
+  patientId?: string;
+  patientHealthId: string;
+  patientName: string;
+  doctorId?: string;
+  doctorName: string;
+  facilityId?: string;
+  facilityName: string;
+  reason: string;
+  note: string;
+  records?: string;
+}
+
+export async function authorizeEmergency(
+  payload: AuthorizeEmergencyPayload
+): Promise<{ token: string; expiresInSeconds: number; log: any }> {
+  const res = await request<ApiResponse<any>>('/emergency/authorize', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+  return res.data;
+}
+
+export async function getEmergencyLogs(): Promise<any[]> {
+  const res = await request<ApiResponse<any[]>>('/emergency/logs');
+  return res.data || [];
+}
+
+export interface DispatchSosPayload {
+  fromName: string;
+  role: string;
+  senderId?: string;
+  patientId?: string;
+  patientHealthId: string;
+  location: string;
+  targetedDoctorId?: string;
+}
+
+export async function dispatchSosAlert(payload: DispatchSosPayload): Promise<any> {
+  const res = await request<ApiResponse<any>>('/emergency/sos', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+
+  return res.data;
+}
+
+export async function getActiveSosAlerts(): Promise<any[]> {
+  const res = await request<ApiResponse<any[]>>('/emergency/sos/active');
+  return res.data || [];
+}
+
+export async function updateSosStatus(id: string, status: string, respondingDoctorId?: string): Promise<any> {
+  const res = await request<ApiResponse<any>>(`/emergency/sos/${encodeURIComponent(id)}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status, respondingDoctorId }),
+  });
 
   return res.data;
 }

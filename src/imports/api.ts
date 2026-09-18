@@ -9,8 +9,18 @@ export async function apiPost(path: string, body: object, token?: string) {
     },
     body: JSON.stringify(body),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.message || 'Request failed');
+  let data: any = {};
+  try {
+    data = await res.json();
+  } catch {
+    data = {};
+  }
+  if (!res.ok) {
+    const detail = data.errors?.length
+      ? `${data.message || 'Validation failed'}: ${data.errors.map((e: any) => `${e.path} (${e.message})`).join(', ')}`
+      : data.message || `Request failed with status ${res.status}`;
+    throw new Error(detail);
+  }
   return data;
 }
 
@@ -18,8 +28,18 @@ export async function apiGet(path: string, token?: string) {
   const res = await fetch(`${BASE}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.message || 'Request failed');
+  let data: any = {};
+  try {
+    data = await res.json();
+  } catch {
+    data = {};
+  }
+  if (!res.ok) {
+    const detail = data.errors?.length
+      ? `${data.message || 'Request failed'}: ${data.errors.map((e: any) => `${e.path} (${e.message})`).join(', ')}`
+      : data.message || `Request failed with status ${res.status}`;
+    throw new Error(detail);
+  }
   return data;
 }
 

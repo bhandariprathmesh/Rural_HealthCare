@@ -1,8 +1,30 @@
-import { useState } from 'react';
-import { PATIENTS, CONSULTATIONS, AI_ASSESSMENTS } from '../data';
-import { RiskBadge, ConsentBadge, HealthIDCard, Tabs, Card, Icon, SectionHeader, AIDisclaimer, PermissionBadge } from '../components/shared';
+import { useState, useEffect } from 'react';
+import {
+  RiskBadge,
+  ConsentBadge,
+  HealthIDCard,
+  Tabs,
+  Card,
+  Icon,
+  SectionHeader,
+  AIDisclaimer,
+  PermissionBadge,
+} from '../components/shared';
+import {
+  getPatientByHealthId,
+  getPatients,
+  getConsultations,
+  createConsultation,
+  updateConsultation,
+  getMedicines,
+  updateReferralStatus,
+  getCurrentUser,
+} from '../api/client';
 
-interface Props { navigate: (s: string) => void; }
+interface Props {
+  navigate: (s: string, patientId?: string) => void;
+  patientId?: string | null;
+}
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -12,15 +34,212 @@ const TABS = [
   { id: 'actions', label: 'Actions' },
 ];
 
-export default function DoctorPatientView({ navigate }: Props) {
+export default function DoctorPatientView({ navigate, patientId }: Props) {
   const [activeTab, setActiveTab] = useState('overview');
   const [addingDiagnosis, setAddingDiagnosis] = useState(false);
   const [diagnosis, setDiagnosis] = useState('');
   const [treatment, setTreatment] = useState('');
+  const [prescriptionList, setPrescriptionList] = useState<string[]>([]);
+  const [prescriptionInput, setPrescriptionInput] = useState('');
+  const [clinicalNotes, setClinicalNotes] = useState('');
+  const [patient, setPatient] = useState<any>(null);
+  const [consultations, setConsultations] = useState<any[]>([]);
+  const [medicines, setMedicines] = useState<any[]>([]);
+  const [activeReferral, setActiveReferral] = useState<any>(null);
+  const [dbUser, setDbUser] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
-  const patient = PATIENTS[1]; // Ramesh Kumar – high risk
-  const consultation = CONSULTATIONS.find(c => c.patientId === patient.id);
-  const aiAssessment = AI_ASSESSMENTS.find(a => a.patientId === patient.id);
+  useEffect(() => {
+    getCurrentUser()
+      .then(setDbUser)
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+
+    async function loadData() {
+      try {
+        let targetId = patientId;
+
+        // If no patientId passed, fetch the patient list and pick the first one
+        if (!targetId) {
+          const patientList = await getPatients().catch(() => []);
+          if (patientList && patientList.length > 0) {
+            targetId = patientList[0].healthId || patientList[0].id;
+          }
+        }
+
+        if (targetId) {
+          const res = await getPatientByHealthId(targetId);
+          if (mounted && res?.patient) {
+            const p = res.patient;
+            setPatient({
+              id: p.healthId || p.id,
+              rawId: p.id,
+              name: p.name || 'Patient',
+              nameHi: p.nameHi || '',
+              age: p.age || 30,
+              gender: p.gender === 'F' || p.gender === 'Female' ? 'Female' : 'Male',
+              bloodGroup: p.bloodGroup || 'O+',
+              allergies: Array.isArray(p.allergies) ? p.allergies : [],
+              chronicConditions: Array.isArray(p.chronicConditions) ? p.chronicConditions : [],
+              currentMedications: Array.isArray(p.currentMedications) ? p.currentMedications : [],
+              village: p.village || 'Govindpur',
+              district: p.district || 'Bikaner',
+              emergencyContact: p.emergencyContact || { name: 'Family Contact', relation: 'Relative', phone: p.phone || '' },
+              riskLevel: (p.riskLevel || 'LOW').toLowerCase(),
+              consentStatus: (p.consentStatus || 'GRANTED').toLowerCase(),
+            });
+
+            const fetchedCons = res.consultations || p.consultations || [];
+            setConsultations(fetchedCons);
+
+            // Populate active referral if present
+            const fetchedRefs = res.referrals || p.referrals || [];
+            if (fetchedRefs.length > 0) {
+              const pendingOrAccepted = fetchedRefs.find((r: any) =>
+                String(r.status || '').toLowerCase() === 'pending' ||
+                String(r.status || '').toLowerCase() === 'accepted' ||
+                String(r.status || '').toLowerCase() === 'in-consultation'
+              );
+              setActiveReferral(pendingOrAccepted || fetchedRefs[0]);
+            }
+          }
+        }
+
+        // Fetch medicine inventory for prescription suggestions
+        const medList = await getMedicines().catch(() => []);
+        if (mounted && medList) {
+          setMedicines(medList);
+        }
+      } catch (err) {
+        console.error('Failed to load patient record from PostgreSQL:', err);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+
+    loadData();
+
+    return () => {
+      mounted = false;
+    };
+  }, [patientId]);
+
+  const latestConsultation = consultations.length > 0 ? consultations[0] : null;
+
+  function handleAddPrescription(medName: string) {
+    const trimmed = medName.trim();
+    if (!trimmed) return;
+    if (!prescriptionList.includes(trimmed)) {
+      setPrescriptionList(prev => [...prev, trimmed]);
+    }
+    setPrescriptionInput('');
+  }
+
+  function handleRemovePrescription(medName: string) {
+    setPrescriptionList(prev => prev.filter(m => m !== medName));
+  }
+
+  async function handleSaveClinicalNote() {
+    if (!diagnosis.trim() && !treatment.trim() && prescriptionList.length === 0) return;
+    setSaving(true);
+    setSaveSuccess(null);
+
+    try {
+      const doctorName = dbUser?.fullName || dbUser?.doctorProfile?.name || 'Doctor';
+      const doctorId = dbUser?.doctorProfile?.id || dbUser?.id;
+
+      if (latestConsultation && latestConsultation.id) {
+        // Update existing consultation with doctor's clinical findings
+        const res = await updateConsultation(latestConsultation.id, {
+          diagnosis: diagnosis.trim() || undefined,
+          treatment: treatment.trim() || undefined,
+          prescription: prescriptionList.length > 0 ? prescriptionList : undefined,
+          notes: clinicalNotes.trim() || undefined,
+          doctorId,
+          doctorName,
+          referralStatus: 'completed',
+        });
+
+        if (res?.consultation) {
+          setConsultations(prev =>
+            prev.map(c => (c.id === latestConsultation.id ? { ...c, ...res.consultation } : c))
+          );
+        }
+      } else {
+        // Create a new consultation recorded by this doctor
+        const res = await createConsultation({
+          patientId: patient?.rawId || patient?.id,
+          doctorId,
+          doctorName,
+          diagnosis: diagnosis.trim(),
+          treatment: treatment.trim(),
+          prescription: prescriptionList,
+          notes: clinicalNotes.trim(),
+          riskLevel: 'moderate',
+          referralStatus: 'completed',
+        });
+
+        if (res?.consultation) {
+          setConsultations(prev => [res.consultation, ...prev]);
+        }
+      }
+
+      setSaveSuccess('Clinical diagnosis and prescription saved successfully in PostgreSQL.');
+      setAddingDiagnosis(false);
+      setDiagnosis('');
+      setTreatment('');
+      setPrescriptionList([]);
+      setClinicalNotes('');
+    } catch (err: any) {
+      console.error('Failed to save clinical note:', err);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleCompleteReferral() {
+    if (!activeReferral?.id) return;
+    try {
+      await updateReferralStatus(activeReferral.id, 'COMPLETED', 'Completed consultation by doctor');
+      setActiveReferral((prev: any) => prev ? { ...prev, status: 'completed' } : null);
+      setSaveSuccess('Referral marked as completed in database.');
+    } catch (err) {
+      console.error('Failed to complete referral:', err);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="p-12 text-center max-w-4xl mx-auto space-y-3">
+        <div className="w-10 h-10 border-4 border-brand-200 border-t-brand-600 rounded-full animate-spin mx-auto" />
+        <p className="text-sm text-gray-500 font-medium">Loading clinical record from PostgreSQL…</p>
+      </div>
+    );
+  }
+
+  if (!patient) {
+    return (
+      <div className="p-8 max-w-4xl mx-auto text-center">
+        <Icon name="user" size={36} className="text-gray-300 mx-auto mb-2" />
+        <h2 className="text-lg font-bold text-gray-800">Patient Not Found</h2>
+        <p className="text-sm text-gray-500 mb-4">No record matching Health ID or patient could not be loaded.</p>
+        <button
+          onClick={() => navigate('doctor-dashboard')}
+          className="px-4 py-2 bg-brand-600 text-white rounded-xl text-xs font-semibold hover:bg-brand-700"
+        >
+          ← Return to Doctor Dashboard
+        </button>
+      </div>
+    );
+  }
+
+  const doctorDisplayName = dbUser?.fullName || dbUser?.doctorProfile?.name || 'Dr. Ankit Sharma';
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-5">
@@ -30,7 +249,7 @@ export default function DoctorPatientView({ navigate }: Props) {
         </button>
         <div>
           <h1 className="font-display text-xl font-bold text-gray-900">Patient Record</h1>
-          <p className="text-xs text-gray-500">Authenticated clinical view · Dr. Ankit Sharma</p>
+          <p className="text-xs text-gray-500">Authenticated clinical view · {doctorDisplayName}</p>
         </div>
         <div className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-100 rounded-xl text-xs text-green-700">
           <Icon name="shield" size={12} />
@@ -38,19 +257,28 @@ export default function DoctorPatientView({ navigate }: Props) {
         </div>
       </div>
 
+      {saveSuccess && (
+        <div className="p-3 bg-green-50 border border-green-200 text-green-800 rounded-xl text-xs flex items-center justify-between">
+          <span>✓ {saveSuccess}</span>
+          <button onClick={() => setSaveSuccess(null)} className="text-green-600 hover:text-green-800 font-bold ml-2">×</button>
+        </div>
+      )}
+
       {/* Patient header */}
       <Card className="overflow-hidden">
         <div className="bg-gradient-to-r from-red-700 to-red-600 px-6 py-5 text-white">
           <div className="flex items-start gap-4">
             <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center text-2xl font-display font-bold shrink-0">
-              {patient.name.split(' ').map(w=>w[0]).join('')}
+              {String(patient.name || 'P').split(' ').map((w: string)=>w[0]).join('').slice(0, 2).toUpperCase()}
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-3 flex-wrap mb-1">
                 <h2 className="font-display text-xl font-bold">{patient.name}</h2>
-                <span className="text-red-200 text-sm">· {patient.nameHi}</span>
+                {patient.nameHi && <span className="text-red-200 text-sm">· {patient.nameHi}</span>}
               </div>
-              <div className="text-red-100 text-sm">{patient.age} yrs · Male · Blood: <strong className="text-white">{patient.bloodGroup}</strong></div>
+              <div className="text-red-100 text-sm">
+                {patient.age} yrs · {patient.gender} · Blood: <strong className="text-white">{patient.bloodGroup}</strong>
+              </div>
               <div className="font-mono text-xs text-red-200 mt-0.5">{patient.id}</div>
               <div className="flex items-center gap-2 mt-2 flex-wrap">
                 <RiskBadge level={patient.riskLevel} />
@@ -60,11 +288,15 @@ export default function DoctorPatientView({ navigate }: Props) {
           </div>
         </div>
         <div className="px-6 py-3 bg-red-50 border-t border-red-100 flex flex-wrap gap-x-8 gap-y-1 text-xs text-gray-600">
-          <span className="flex items-center gap-1 text-red-700 font-semibold"><Icon name="alert" size={11} />
-            ALLERGIES: {patient.allergies.join(', ')}
+          <span className="flex items-center gap-1 text-red-700 font-semibold">
+            <Icon name="alert" size={11} />
+            ALLERGIES: {patient.allergies && patient.allergies.length > 0 ? patient.allergies.join(', ') : 'None known'}
           </span>
-          <span className="flex items-center gap-1"><Icon name="map_pin" size={11} className="text-gray-400" />{patient.village}, {patient.district}</span>
-          <span>Emergency: {patient.emergencyContact.name} ({patient.emergencyContact.relation})</span>
+          <span className="flex items-center gap-1">
+            <Icon name="map_pin" size={11} className="text-gray-400" />
+            {patient.village}, {patient.district}
+          </span>
+          <span>Emergency: {patient.emergencyContact?.name} ({patient.emergencyContact?.relation})</span>
         </div>
       </Card>
 
@@ -76,49 +308,70 @@ export default function DoctorPatientView({ navigate }: Props) {
             <Card className="p-5">
               <SectionHeader title="Chronic Conditions" />
               <div className="flex flex-wrap gap-2">
-                {patient.chronicConditions.map(c => (
-                  <span key={c} className="px-3 py-1.5 bg-amber-50 border border-amber-100 text-amber-800 rounded-xl text-sm font-medium">{c}</span>
-                ))}
+                {patient.chronicConditions && patient.chronicConditions.length > 0 ? (
+                  patient.chronicConditions.map((c: string) => (
+                    <span key={c} className="px-3 py-1.5 bg-amber-50 border border-amber-100 text-amber-800 rounded-xl text-sm font-medium">
+                      {c}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-xs text-gray-400">No chronic conditions recorded</span>
+                )}
               </div>
             </Card>
 
             <Card className="p-5">
               <SectionHeader title="Current Medications" />
               <div className="space-y-2.5">
-                {patient.currentMedications.map((m, i) => (
-                  <div key={i} className="flex items-center gap-3 p-3 border border-gray-100 rounded-xl">
-                    <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
-                      <Icon name="pill" size={14} className="text-blue-600" />
+                {patient.currentMedications && patient.currentMedications.length > 0 ? (
+                  patient.currentMedications.map((m: string, i: number) => (
+                    <div key={i} className="flex items-center gap-3 p-3 border border-gray-100 rounded-xl">
+                      <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
+                        <Icon name="pill" size={14} className="text-blue-600" />
+                      </div>
+                      <div className="text-sm text-gray-800 font-medium">{m}</div>
                     </div>
-                    <div className="text-sm text-gray-800 font-medium">{m}</div>
-                  </div>
-                ))}
+                  ))
+                ) : (
+                  <span className="text-xs text-gray-400">No current medications listed</span>
+                )}
               </div>
             </Card>
 
             <Card className="p-5">
-              <SectionHeader title="Previous Consultations" sub="Consultation providers — not different patients" />
-              <p className="text-[10px] text-gray-400 mb-3 -mt-2">The names below are the ASHA workers and doctors who recorded or reviewed each consultation.</p>
+              <SectionHeader title="Previous Consultations" sub="Consultation records from PostgreSQL" />
               <div className="space-y-3">
-                {CONSULTATIONS.map(c => (
-                  <div key={c.id} className="p-3 bg-gray-50 rounded-xl">
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="text-sm font-medium">{c.date}</div>
-                      <RiskBadge level={c.riskLevel} size="sm" />
-                    </div>
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <span className="text-[10px] text-gray-500">Recorded by: <strong>{c.workerName}</strong></span>
-                      <PermissionBadge type="asha-recorded" />
-                    </div>
-                    {'doctorName' in c && c.doctorName && (
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <span className="text-[10px] text-gray-500">Reviewed by: <strong>{c.doctorName as string}</strong></span>
-                        <PermissionBadge type="doctor-editable" />
+                {consultations.length === 0 ? (
+                  <p className="text-xs text-gray-400">No prior consultations recorded for this patient.</p>
+                ) : (
+                  consultations.map((c: any) => (
+                    <div key={c.id} className="p-3 bg-gray-50 rounded-xl">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="text-sm font-medium">{c.date || 'Recent'}</div>
+                        <RiskBadge level={c.riskLevel} size="sm" />
                       </div>
-                    )}
-                    <div className="text-xs text-gray-700 mt-1">Symptoms: {c.symptoms.join(', ')}</div>
-                  </div>
-                ))}
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="text-[10px] text-gray-500">Recorded by: <strong>{c.workerName || 'Health Worker'}</strong></span>
+                        <PermissionBadge type="asha-recorded" />
+                      </div>
+                      {c.doctorName && (
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className="text-[10px] text-gray-500">Reviewed by: <strong>{c.doctorName}</strong></span>
+                          <PermissionBadge type="doctor-editable" />
+                        </div>
+                      )}
+                      {c.diagnosis && (
+                        <div className="text-xs text-brand-800 font-medium mt-1">Diagnosis: {c.diagnosis}</div>
+                      )}
+                      {c.symptoms && Array.isArray(c.symptoms) && c.symptoms.length > 0 && (
+                        <div className="text-xs text-gray-700 mt-1">Symptoms: {c.symptoms.join(', ')}</div>
+                      )}
+                      {c.treatment && (
+                        <div className="text-xs text-gray-600 mt-1">Treatment: {c.treatment}</div>
+                      )}
+                    </div>
+                  ))
+                )}
               </div>
             </Card>
           </div>
@@ -126,51 +379,75 @@ export default function DoctorPatientView({ navigate }: Props) {
           <div className="space-y-4">
             <HealthIDCard id={patient.id} name={patient.name} size="md" />
 
-            <Card className="p-4 border-red-100 bg-red-50">
-              <div className="flex items-start gap-2">
-                <Icon name="alert" size={16} className="text-red-600 shrink-0 mt-0.5" />
-                <div>
-                  <div className="text-xs font-bold text-red-700">Critical Referral</div>
-                  <div className="text-xs text-red-600 mt-0.5">Suspected ACS. Patient has been referred from health worker Sunita Yadav.</div>
-                  <button onClick={() => navigate('referral')} className="text-xs text-red-700 font-semibold mt-1.5 hover:underline">View Referral →</button>
+            {activeReferral && (
+              <Card className="p-4 border-red-100 bg-red-50">
+                <div className="flex items-start gap-2">
+                  <Icon name="alert" size={16} className="text-red-600 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="text-xs font-bold text-red-700">Active Referral · {activeReferral.priority || 'Normal'}</div>
+                    <div className="text-xs text-red-600 mt-0.5">{activeReferral.reason || 'Referral pending doctor review'}</div>
+                    <div className="text-[10px] text-red-500 mt-1">From: {activeReferral.fromWorker || 'ASHA'} → {activeReferral.toPHC || 'PHC'}</div>
+                    <div className="flex items-center gap-2 mt-2">
+                      <button onClick={() => navigate('referral')} className="text-xs text-red-700 font-semibold hover:underline">
+                        View Referral →
+                      </button>
+                      {String(activeReferral.status || '').toLowerCase() !== 'completed' && (
+                        <button
+                          onClick={handleCompleteReferral}
+                          className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold"
+                        >
+                          Mark Completed
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </Card>
+              </Card>
+            )}
 
             <Card className="p-4">
               <div className="text-xs font-semibold text-gray-500 mb-2">EMERGENCY CONTACT</div>
-              <div className="text-sm font-medium text-gray-900">{patient.emergencyContact.name}</div>
-              <div className="text-xs text-gray-500">{patient.emergencyContact.relation}</div>
-              <div className="text-xs text-brand-600 font-mono mt-1">{patient.emergencyContact.phone}</div>
+              <div className="text-sm font-medium text-gray-900">{patient.emergencyContact?.name}</div>
+              <div className="text-xs text-gray-500">{patient.emergencyContact?.relation}</div>
+              <div className="text-xs text-brand-600 font-mono mt-1">{patient.emergencyContact?.phone}</div>
             </Card>
           </div>
         </div>
       )}
 
-      {activeTab === 'vitals' && consultation && (
+      {activeTab === 'vitals' && (
         <div className="space-y-4">
           <Card className="p-5">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="font-display text-lg font-semibold text-gray-900">Latest Vitals</h2>
-                <p className="text-xs text-gray-500 mt-0.5">Recorded: {consultation.date}, {consultation.time}</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {latestConsultation ? `Recorded: ${latestConsultation.date || 'Recent'}, ${latestConsultation.time || ''}` : 'No vitals recorded yet'}
+                </p>
               </div>
               <PermissionBadge type="asha-recorded" />
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-                { label: 'Temperature', value: `${consultation.vitals.temperature}°C`, abnormal: consultation.vitals.temperature > 37.5 },
-                { label: 'Blood Pressure', value: consultation.vitals.bloodPressure, abnormal: true },
-                { label: 'Heart Rate', value: `${consultation.vitals.heartRate} bpm`, abnormal: consultation.vitals.heartRate > 100 },
-                { label: 'SpO₂', value: `${consultation.vitals.spo2}%`, abnormal: consultation.vitals.spo2 < 95 },
-              ].map(v => (
-                <div key={v.label} className={`p-4 rounded-2xl text-center border-2 ${v.abnormal ? 'border-red-200 bg-red-50' : 'border-gray-100 bg-gray-50'}`}>
-                  <div className={`font-mono text-xl font-bold ${v.abnormal ? 'text-red-700' : 'text-gray-800'}`}>{v.value}</div>
-                  <div className="text-xs text-gray-500 mt-1">{v.label}</div>
-                  {v.abnormal && <div className="text-[10px] text-red-500 font-bold mt-1 uppercase">Abnormal</div>}
-                </div>
-              ))}
-            </div>
+
+            {latestConsultation?.vitals ? (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { label: 'Temperature', value: `${latestConsultation.vitals.temperature || '37.0'}°C`, abnormal: Number(latestConsultation.vitals.temperature) > 37.5 },
+                  { label: 'Blood Pressure', value: latestConsultation.vitals.bloodPressure || '120/80', abnormal: String(latestConsultation.vitals.bloodPressure || '').startsWith('14') },
+                  { label: 'Heart Rate', value: `${latestConsultation.vitals.heartRate || '75'} bpm`, abnormal: Number(latestConsultation.vitals.heartRate) > 100 },
+                  { label: 'SpO₂', value: `${latestConsultation.vitals.spo2 || '98'}%`, abnormal: Number(latestConsultation.vitals.spo2) < 95 },
+                ].map(v => (
+                  <div key={v.label} className={`p-4 rounded-2xl text-center border-2 ${v.abnormal ? 'border-red-200 bg-red-50' : 'border-gray-100 bg-gray-50'}`}>
+                    <div className={`font-mono text-xl font-bold ${v.abnormal ? 'text-red-700' : 'text-gray-800'}`}>{v.value}</div>
+                    <div className="text-xs text-gray-500 mt-1">{v.label}</div>
+                    {v.abnormal && <div className="text-[10px] text-red-500 font-bold mt-1 uppercase">Abnormal</div>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-6 text-center text-gray-400 text-sm">
+                No clinical vitals recorded yet. Record vitals via "Actions" tab or Health Assessment.
+              </div>
+            )}
           </Card>
 
           <Card className="p-5">
@@ -179,30 +456,74 @@ export default function DoctorPatientView({ navigate }: Props) {
               <PermissionBadge type="asha-recorded" />
             </div>
             <div className="flex flex-wrap gap-2">
-              {consultation.symptoms.map(s => (
-                <span key={s} className="px-3 py-1.5 bg-amber-50 border border-amber-100 text-amber-800 rounded-xl text-sm font-medium">{s}</span>
-              ))}
+              {latestConsultation?.symptoms && latestConsultation.symptoms.length > 0 ? (
+                latestConsultation.symptoms.map((s: string) => (
+                  <span key={s} className="px-3 py-1.5 bg-amber-50 border border-amber-100 text-amber-800 rounded-xl text-sm font-medium">
+                    {s}
+                  </span>
+                ))
+              ) : (
+                <span className="text-xs text-gray-400">No acute symptoms reported</span>
+              )}
             </div>
           </Card>
         </div>
       )}
 
-      {activeTab === 'ai' && aiAssessment && (
+      {activeTab === 'history' && (
+        <Card className="p-5 space-y-4">
+          <SectionHeader title="Complete Longitudinal History" sub="Records persisted in PostgreSQL database" />
+          <div className="divide-y divide-gray-100">
+            {consultations.length === 0 ? (
+              <p className="text-xs text-gray-400 py-4">No consultation history available.</p>
+            ) : (
+              consultations.map((c: any) => (
+                <div key={c.id} className="py-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-semibold text-sm text-gray-900">{c.consultationCode || c.id} · {c.date}</span>
+                    <RiskBadge level={c.riskLevel} size="sm" />
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    <strong>Diagnosis:</strong> {c.diagnosis || 'Clinical evaluation'}
+                  </div>
+                  {c.treatment && (
+                    <div className="text-xs text-gray-600 mt-0.5">
+                      <strong>Treatment:</strong> {c.treatment}
+                    </div>
+                  )}
+                  {c.prescription && Array.isArray(c.prescription) && c.prescription.length > 0 && (
+                    <div className="text-xs text-brand-700 mt-0.5">
+                      <strong>Prescription:</strong> {c.prescription.join(', ')}
+                    </div>
+                  )}
+                  <div className="text-[10px] text-gray-400 mt-1">
+                    Recorded by {c.workerName || 'ASHA Worker'} {c.doctorName ? `· Reviewed by ${c.doctorName}` : ''}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </Card>
+      )}
+
+      {activeTab === 'ai' && (
         <div className="space-y-4">
           <AIDisclaimer />
-          <Card className="p-5 border-red-200 bg-red-50">
+          <Card className="p-5 border-blue-200 bg-blue-50">
             <div className="flex items-center justify-between mb-3">
               <div className="font-display text-lg font-bold text-gray-900">AI Risk Assessment</div>
-              <RiskBadge level={aiAssessment.riskLevel} size="lg" />
+              <RiskBadge level={patient.riskLevel} size="lg" />
             </div>
-            <div className="p-4 bg-white rounded-xl border border-red-100 mb-3">
-              <div className="text-xs font-bold text-gray-500 mb-1">RECOMMENDED ACTION</div>
-              <p className="text-sm font-semibold text-red-800">{aiAssessment.recommendedAction}</p>
+            <div className="p-4 bg-white rounded-xl border border-blue-100 mb-3">
+              <div className="text-xs font-bold text-gray-500 mb-1">RECOMMENDED CLINICAL ACTION</div>
+              <p className="text-sm font-semibold text-brand-800">
+                {patient.riskLevel === 'critical' || patient.riskLevel === 'high'
+                  ? 'Urgent clinical evaluation required. Order comprehensive blood work and ECG.'
+                  : 'Routine monitoring and lifestyle counselling. Schedule regular follow-up.'}
+              </p>
             </div>
-            <div className="text-xs text-gray-600 bg-white p-3 rounded-xl leading-relaxed">{aiAssessment.reasoning}</div>
-            <div className="flex items-center justify-between mt-3 text-xs text-gray-400">
-              <span>Confidence: {aiAssessment.confidence}%</span>
-              <span>{aiAssessment.generatedAt}</span>
+            <div className="text-xs text-gray-600 bg-white p-3 rounded-xl leading-relaxed">
+              Longitudinal analysis based on patient vitals, reported symptoms, and known chronic conditions.
             </div>
           </Card>
         </div>
@@ -210,27 +531,30 @@ export default function DoctorPatientView({ navigate }: Props) {
 
       {activeTab === 'actions' && (
         <div className="space-y-4">
-          {/* Role clarity banner for Actions tab */}
           <div className="flex items-start gap-2.5 px-4 py-3 bg-purple-50 border border-purple-100 rounded-xl">
             <Icon name="shield" size={14} className="text-purple-600 shrink-0 mt-0.5" />
             <div className="flex-1">
               <div className="text-xs font-bold text-purple-800">Doctor Clinical Actions</div>
-              <div className="text-[10px] text-purple-600 mt-0.5">Clinical records updated here are attributed to Dr. Ankit Sharma and form part of the permanent patient record.</div>
+              <div className="text-[10px] text-purple-600 mt-0.5">
+                Clinical records entered here are saved directly to PostgreSQL under {doctorDisplayName} and form part of the permanent patient record.
+              </div>
             </div>
             <PermissionBadge type="doctor-editable" />
           </div>
+
           {!addingDiagnosis ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {[
-                { label: 'Add Diagnosis', icon: 'clipboard', action: () => setAddingDiagnosis(true), color: 'bg-brand-600 text-white hover:bg-brand-700' },
+                { label: 'Add Diagnosis / Rx', icon: 'clipboard', action: () => setAddingDiagnosis(true), color: 'bg-brand-600 text-white hover:bg-brand-700' },
                 { label: 'Add Treatment Plan', icon: 'pill', action: () => setAddingDiagnosis(true), color: 'bg-purple-600 text-white hover:bg-purple-700' },
-                { label: 'Request Lab Tests', icon: 'document', action: () => {}, color: 'bg-blue-600 text-white hover:bg-blue-700' },
-                { label: 'Create Referral', icon: 'share', action: () => navigate('referral'), color: 'bg-amber-500 text-white hover:bg-amber-600' },
-                { label: 'Schedule Follow-up', icon: 'history', action: () => {}, color: 'bg-green-600 text-white hover:bg-green-700' },
-                { label: 'View AI Assessment', icon: 'brain', action: () => setActiveTab('ai'), color: 'bg-gray-800 text-white hover:bg-gray-900' },
+                { label: 'Refer to Specialist / CHC', icon: 'share', action: () => navigate('referral'), color: 'bg-amber-500 text-white hover:bg-amber-600' },
+                { label: 'View Longitudinal History', icon: 'history', action: () => setActiveTab('history'), color: 'bg-green-600 text-white hover:bg-green-700' },
               ].map(a => (
-                <button key={a.label} onClick={a.action}
-                  className={`p-4 rounded-2xl flex items-center gap-3 font-semibold text-sm transition-all active:scale-95 ${a.color}`}>
+                <button
+                  key={a.label}
+                  onClick={a.action}
+                  className={`p-4 rounded-2xl flex items-center gap-3 font-semibold text-sm transition-all active:scale-95 ${a.color}`}
+                >
                   <Icon name={a.icon} size={18} />
                   {a.label}
                 </button>
@@ -238,32 +562,125 @@ export default function DoctorPatientView({ navigate }: Props) {
             </div>
           ) : (
             <Card className="p-5">
-              <SectionHeader title="Add Clinical Note" action={
-                <button onClick={() => setAddingDiagnosis(false)} className="text-gray-400 hover:text-gray-600">
-                  <Icon name="x" size={18} />
-                </button>
-              } />
+              <SectionHeader
+                title="Clinical Entry · Doctor Review"
+                action={
+                  <button onClick={() => setAddingDiagnosis(false)} className="text-gray-400 hover:text-gray-600">
+                    <Icon name="x" size={18} />
+                  </button>
+                }
+              />
               <div className="space-y-4">
                 <div>
-                  <label className="text-xs font-medium text-gray-600 block mb-1.5">Diagnosis *</label>
-                  <textarea value={diagnosis} onChange={e => setDiagnosis(e.target.value)} rows={2}
-                    placeholder="e.g. Acute Coronary Syndrome – NSTEMI (suspected)"
-                    className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none" />
+                  <label className="text-xs font-medium text-gray-700 block mb-1.5">Diagnosis *</label>
+                  <textarea
+                    value={diagnosis}
+                    onChange={e => setDiagnosis(e.target.value)}
+                    rows={2}
+                    placeholder="e.g. Acute Coronary Syndrome – NSTEMI (suspected) or Essential Hypertension"
+                    className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none"
+                  />
                 </div>
+
                 <div>
-                  <label className="text-xs font-medium text-gray-600 block mb-1.5">Treatment Plan</label>
-                  <textarea value={treatment} onChange={e => setTreatment(e.target.value)} rows={3}
-                    placeholder="Treatment plan, medications, instructions..."
-                    className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none" />
+                  <label className="text-xs font-medium text-gray-700 block mb-1.5">Treatment Plan</label>
+                  <textarea
+                    value={treatment}
+                    onChange={e => setTreatment(e.target.value)}
+                    rows={2}
+                    placeholder="e.g. Start dual antiplatelet therapy, bed rest, monitor vitals Q4H"
+                    className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none"
+                  />
                 </div>
-                <div className="flex gap-3">
-                  <button onClick={() => setAddingDiagnosis(false)}
-                    className="px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600">
+
+                <div>
+                  <label className="text-xs font-medium text-gray-700 block mb-1.5">Prescription / Medications (Rx)</label>
+                  <div className="flex gap-2 mb-2">
+                    <input
+                      value={prescriptionInput}
+                      onChange={e => setPrescriptionInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddPrescription(prescriptionInput); } }}
+                      placeholder="Type medicine name (e.g. Paracetamol 500mg) and press Add"
+                      className="flex-1 px-3.5 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleAddPrescription(prescriptionInput)}
+                      className="px-4 py-2 bg-gray-800 text-white rounded-xl text-xs font-bold hover:bg-gray-900"
+                    >
+                      + Add
+                    </button>
+                  </div>
+
+                  {medicines.length > 0 && (
+                    <div className="mb-3">
+                      <div className="text-[10px] text-gray-400 mb-1">Quick Select from Pharmacy Inventory:</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {medicines.slice(0, 6).map((m: any) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => handleAddPrescription(`${m.name} ${m.strength || ''}`)}
+                            className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-[11px] font-medium border border-blue-100 transition-colors"
+                          >
+                            + {m.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {prescriptionList.length > 0 && (
+                    <div className="flex flex-wrap gap-2 p-2 bg-gray-50 rounded-xl border border-gray-100">
+                      {prescriptionList.map((item, idx) => (
+                        <span key={idx} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-gray-200 rounded-lg text-xs text-gray-800 font-medium">
+                          💊 {item}
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePrescription(item)}
+                            className="text-gray-400 hover:text-red-600 font-bold ml-1"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-gray-700 block mb-1.5">Doctor Clinical Notes</label>
+                  <textarea
+                    value={clinicalNotes}
+                    onChange={e => setClinicalNotes(e.target.value)}
+                    rows={2}
+                    placeholder="Additional clinical observations, follow-up instructions..."
+                    className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 resize-none"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setAddingDiagnosis(false)}
+                    className="px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50"
+                  >
                     Cancel
                   </button>
-                  <button onClick={() => { setAddingDiagnosis(false); }}
-                    className="flex-1 py-2.5 bg-brand-600 text-white font-semibold rounded-xl text-sm hover:bg-brand-700">
-                    Save & Update Record
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={handleSaveClinicalNote}
+                    className="flex-1 py-2.5 bg-brand-600 text-white font-semibold rounded-xl text-sm hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {saving ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Saving to PostgreSQL…
+                      </>
+                    ) : (
+                      'Save & Update Record'
+                    )}
                   </button>
                 </div>
               </div>

@@ -18,7 +18,7 @@ const createConsultationSchema = z.object({
     heartRate: z.number().or(z.string()).optional(),
     spo2: z.number().or(z.string()).optional(),
     weight: z.number().or(z.string()).optional(),
-  }).passthrough(),
+  }).passthrough().default({}),
   diagnosis: z.string().optional(),
   treatment: z.string().optional(),
   prescription: z.array(z.string()).default([]),
@@ -185,3 +185,80 @@ export async function createConsultation(req: Request, res: Response, next: Next
     next(err);
   }
 }
+
+const updateConsultationSchema = z.object({
+  diagnosis: z.string().optional(),
+  treatment: z.string().optional(),
+  prescription: z.array(z.string()).optional(),
+  notes: z.string().optional(),
+  riskLevel: z.enum(['LOW', 'MODERATE', 'HIGH', 'CRITICAL', 'low', 'moderate', 'high', 'critical']).optional(),
+  referralStatus: z.string().optional(),
+  followUpDate: z.string().optional(),
+  doctorId: z.string().optional(),
+  doctorName: z.string().optional(),
+  symptoms: z.array(z.string()).optional(),
+  vitals: z.record(z.any()).optional(),
+});
+
+/**
+ * Update an existing consultation with doctor diagnosis, prescription, or status.
+ * PATCH /api/v1/consultations/:id
+ */
+export async function updateConsultation(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const rawId = req.params.id;
+    const id = Array.isArray(rawId) ? rawId[0] : rawId;
+    const input = updateConsultationSchema.parse(req.body);
+
+    const existing = await prisma.consultation.findFirst({
+      where: {
+        OR: [{ id }, { consultationCode: id }],
+      },
+    });
+
+    if (!existing) {
+      throw new AppError(`Consultation '${id}' not found`, 404);
+    }
+
+    const updateData: any = {};
+    if (input.diagnosis !== undefined) updateData.diagnosis = input.diagnosis;
+    if (input.treatment !== undefined) updateData.treatment = input.treatment;
+    if (input.prescription !== undefined) updateData.prescription = input.prescription;
+    if (input.notes !== undefined) updateData.notes = input.notes;
+    if (input.riskLevel !== undefined) updateData.riskLevel = input.riskLevel.toUpperCase() as RiskLevel;
+    if (input.referralStatus !== undefined) updateData.referralStatus = input.referralStatus;
+    if (input.followUpDate !== undefined) updateData.followUpDate = input.followUpDate;
+    if (input.doctorId !== undefined) updateData.doctorId = input.doctorId;
+    if (input.doctorName !== undefined) updateData.doctorName = input.doctorName;
+    if (input.symptoms !== undefined) updateData.symptoms = input.symptoms;
+    if (input.vitals !== undefined) updateData.vitals = input.vitals;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const con = await tx.consultation.update({
+        where: { id: existing.id },
+        data: updateData,
+        include: {
+          patient: true,
+        },
+      });
+
+      if (updateData.riskLevel) {
+        await tx.patient.update({
+          where: { id: existing.patientId },
+          data: { riskLevel: updateData.riskLevel },
+        });
+      }
+
+      return con;
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Consultation updated successfully in clinical record.',
+      data: { consultation: updated },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+

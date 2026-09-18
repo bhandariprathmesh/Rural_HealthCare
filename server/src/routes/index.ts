@@ -11,6 +11,7 @@ import medicineRoutes from './medicine.routes.js';
 import aiRoutes from './ai.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
 import abdmMockRoutes from './abdm.mock.routes.js';
+import emergencyRoutes from './emergency.routes.js';
 
 const router = Router();
 
@@ -25,5 +26,6 @@ router.use('/medicines', medicineRoutes);
 router.use('/ai-assessments', aiRoutes);
 router.use('/dashboards', dashboardRoutes);
 router.use('/abdm/mock', abdmMockRoutes);
+router.use('/emergency', emergencyRoutes);
 
 export default router;
