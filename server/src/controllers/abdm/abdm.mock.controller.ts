@@ -738,6 +738,26 @@ export async function revokeConsent(
   }
 }
 
+export async function approveConsent(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const id = getParam(req.params.id);
+    const consent = await consentService.approveConsent(id);
+
+    res.status(200).json({
+      status: 'success',
+      isMock: true,
+      message: 'Consent approved and granted successfully.',
+      data: consent,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 // ─── FHIR R4 Handlers ────────────────────────────────────────────────────────
 
 export async function getFHIRPatient(

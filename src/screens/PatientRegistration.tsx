@@ -10,9 +10,9 @@ const STEPS = ['Personal Info', 'Contact & Location', 'Medical Info', 'Health ID
 export default function PatientRegistration({ navigate, isOffline }: Props) {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({
-    name: '', nameHi: '', dob: '', gender: '', blood: '', phone: '',
-    aadhaar: '', abhaAddress: '', abhaNumber: '',
     name: '', nameHi: '', dob: '', gender: 'Female', blood: '', phone: '',
+    pin: '1234',
+    aadhaar: '', abhaAddress: '', abhaNumber: '',
     village: '', district: 'Bikaner', state: 'Rajasthan', address: '',
     emergencyName: '', emergencyRelation: '', emergencyPhone: '',
     allergies: '', conditions: '', medications: '',
@@ -20,6 +20,8 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
   const [consentGiven, setConsentGiven] = useState(true);
   const [generatedId, setGeneratedId] = useState('');
   const [registeredPatient, setRegisteredPatient] = useState<any>(null);
+  const [credentials, setCredentials] = useState<any>(null);
+  const [copiedToast, setCopiedToast] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -41,28 +43,6 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
     setIsSubmitting(true);
     setError('');
     try {
-      const payload = {
-        name: form.name.trim(),
-        nameHi: form.nameHi.trim() || form.name.trim(),
-        dob: form.dob,
-        gender: form.gender,
-        bloodGroup: form.blood || 'Not known',
-        phone: form.phone.trim(),
-        village: form.village.trim(),
-        district: form.district.trim(),
-        state: form.state.trim(),
-        address: form.address.trim() || `${form.village.trim()}, ${form.district.trim()}, ${form.state.trim()}`,
-        emergencyContact: {
-          name: form.emergencyName.trim(),
-          relation: form.emergencyRelation.trim() || 'Family',
-          phone: form.emergencyPhone.trim()
-        },
-        allergies: form.allergies ? form.allergies.split(',').map(s => s.trim()).filter(Boolean) : [],
-        chronicConditions: form.conditions ? form.conditions.split(',').map(s => s.trim()).filter(Boolean) : [],
-        currentMedications: form.medications ? form.medications.split(',').map(s => s.trim()).filter(Boolean) : [],
-        abhaAddress: form.abhaAddress.trim() || undefined,
-        abhaNumber: form.abhaNumber.trim() || undefined,
-        consent: { granted: true },
       const payload: any = {
         name: form.name.trim(),
         nameHi: form.nameHi.trim() || undefined,
@@ -70,6 +50,7 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
         gender: form.gender || 'Female',
         bloodGroup: form.blood || undefined,
         phone: form.phone.trim(),
+        pin: form.pin?.trim() || '1234',
         village: form.village.trim(),
         district: form.district.trim() || 'Bikaner',
         state: form.state.trim() || 'Rajasthan',
@@ -97,6 +78,12 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
       if(newPatient?.healthId) {
         setRegisteredPatient(newPatient);
         setGeneratedId(newPatient.healthId);
+        setCredentials(res?.data?.credentials || {
+          phone: form.phone.trim(),
+          pin: form.pin?.trim() || '1234',
+          healthId: newPatient.healthId,
+          name: newPatient.name,
+        });
         setStep(3); // success
       }
     } catch(err: any) {
@@ -211,6 +198,18 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
                 </div>
               </div>
               <div>
+                <label className={labelClass}>Security Login PIN (4 Digits) *</label>
+                <input
+                  type="text"
+                  maxLength={6}
+                  value={form.pin}
+                  onChange={e => update('pin', e.target.value)}
+                  placeholder="1234"
+                  className={`${inputClass} font-mono tracking-wider`}
+                />
+                <p className="text-[10px] text-gray-500 mt-0.5">Default is 1234. Patient uses this PIN to log in.</p>
+              </div>
+              <div>
                 <label className={labelClass}>Village / Town *</label>
                 <input value={form.village} onChange={e => update('village', e.target.value)} placeholder="e.g. Govindpur" className={inputClass} />
               </div>
@@ -298,7 +297,7 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
           </div>
         )}
 
-        {/* Step 4: Health ID Generated */}
+        {/* Step 4: Health ID Generated & Credentials Card */}
         {step === 3 && (
           <div className="text-center space-y-6">
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
@@ -316,13 +315,71 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
               )}
             </div>
 
-            <div className="flex justify-center">
-              <HealthIDCard id={generatedId} name={registeredPatient?.name || form.name} size="lg" />
-              <p className="text-sm text-gray-500 mt-1">{form.name || 'Patient'} has been registered in the system.</p>
+            {/* Real Patient Login Credentials Summary Card */}
+            <div className="bg-gradient-to-br from-teal-900 to-teal-800 text-white rounded-3xl p-6 shadow-xl text-left space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-teal-700/60">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-teal-700/80 flex items-center justify-center text-teal-200">
+                    <Icon name="key" size={16} />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-base text-white">Patient Login Credentials</h3>
+                    <p className="text-[11px] text-teal-200">Share with patient for direct mobile login</p>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 bg-teal-700/50 rounded-full text-[10px] font-bold text-teal-200 uppercase tracking-wider">
+                  Real DB Account
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div className="p-3 bg-white/10 rounded-2xl">
+                  <div className="text-[10px] uppercase font-bold text-teal-300">Registered Name</div>
+                  <div className="font-semibold text-sm text-white mt-0.5">{registeredPatient?.name || form.name}</div>
+                  {registeredPatient?.nameHi && <div className="text-xs text-teal-200">{registeredPatient.nameHi}</div>}
+                </div>
+
+                <div className="p-3 bg-white/10 rounded-2xl">
+                  <div className="text-[10px] uppercase font-bold text-teal-300">Health ID</div>
+                  <div className="font-mono font-bold text-sm text-white mt-0.5">{generatedId}</div>
+                </div>
+
+                <div className="p-3 bg-white/10 rounded-2xl">
+                  <div className="text-[10px] uppercase font-bold text-teal-300">Login Mobile Number</div>
+                  <div className="font-mono font-bold text-base text-teal-100 mt-0.5">
+                    +91 {registeredPatient?.phone || form.phone}
+                  </div>
+                </div>
+
+                <div className="p-3 bg-teal-500/20 border border-teal-400/30 rounded-2xl">
+                  <div className="text-[10px] uppercase font-bold text-teal-300">Default Login PIN</div>
+                  <div className="font-mono font-bold text-xl text-teal-100 mt-0.5 tracking-wider">
+                    {credentials?.pin || form.pin || '1234'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-3 bg-teal-700/40 rounded-2xl flex items-center justify-between text-xs text-teal-200">
+                <span>Assigned ASHA Worker:</span>
+                <strong className="text-white">{registeredPatient?.healthWorkerName || 'Community Health Worker'}</strong>
+              </div>
+
+              <button
+                onClick={() => {
+                  const credText = `RuralCare Patient Login Credentials\nName: ${registeredPatient?.name || form.name}\nHealth ID: ${generatedId}\nLogin Phone: +91 ${registeredPatient?.phone || form.phone}\nLogin PIN: ${credentials?.pin || form.pin || '1234'}\nAssigned ASHA: ${registeredPatient?.healthWorkerName || 'Community Health Worker'}\nPortal: Select 'Patient' and log in with your phone and PIN.`;
+                  navigator.clipboard?.writeText(credText);
+                  setCopiedToast(true);
+                  setTimeout(() => setCopiedToast(false), 2500);
+                }}
+                className="w-full py-3 bg-white hover:bg-teal-50 text-teal-900 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer"
+              >
+                <Icon name="clipboard" size={14} />
+                {copiedToast ? 'Credentials Copied to Clipboard!' : 'Copy Login Credentials'}
+              </button>
             </div>
 
             <div className="flex justify-center">
-              <HealthIDCard id={generatedId} name={form.name || 'Patient'} size="lg" />
+              <HealthIDCard id={generatedId} name={registeredPatient?.name || form.name} size="lg" />
             </div>
 
             {isOffline && (
@@ -347,18 +404,7 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
               ))}
             </div>
 
-            {/* QR placeholder */}
-            <div className="border-2 border-dashed border-gray-200 rounded-2xl p-6 max-w-xs mx-auto">
-              <div className="grid grid-cols-5 gap-1 opacity-30">
-                {Array.from({ length: 25 }).map((_, i) => (
-                  <div key={i} className={`w-full aspect-square rounded-sm ${Math.random() > 0.5 ? 'bg-gray-900' : 'bg-transparent'}`} />
-                ))}
-              </div>
-              <p className="text-[10px] text-gray-400 mt-3 font-mono">{generatedId}</p>
-            </div>
-
             <button onClick={() => navigate('patient-profile', registeredPatient?.id || registeredPatient?.healthId || generatedId)}
-            <button onClick={() => navigate('patient-profile', generatedId)}
               className="w-full py-3 bg-brand-600 hover:bg-brand-700 text-white font-semibold rounded-xl transition-colors">
               View Patient Profile
             </button>

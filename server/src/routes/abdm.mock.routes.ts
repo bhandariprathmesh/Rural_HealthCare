@@ -16,6 +16,7 @@ import {
   getConsentById,
   createConsent,
   revokeConsent,
+  approveConsent,
   getFHIRPatient,
   getFHIREncounter,
   getFHIRBundle,
@@ -50,6 +51,7 @@ router.get('/abha/:id', getAbhaProfile);
 // Consent & PHR Endpoints
 router.get('/consents/:id', getConsentById);
 router.post('/consents', createConsent);
+router.post('/consents/:id/approve', approveConsent);
 router.post('/consents/:id/revoke', revokeConsent);
 
 // FHIR R4 Interoperability Endpoints

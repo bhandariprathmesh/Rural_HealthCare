@@ -153,6 +153,11 @@ export default function DoctorDashboard({ navigate, sosAlerts = [], onDismissSOS
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => navigate('doctor-sos-inbox')}
+            className="flex items-center gap-1.5 px-3 py-2 bg-red-100 hover:bg-red-200 text-red-800 border border-red-300 rounded-xl text-xs font-bold transition-colors">
+            <span className="w-2 h-2 rounded-full bg-red-600 animate-pulse" />
+            SOS Inbox
+          </button>
           <div className="px-3 py-2 bg-purple-50 border border-purple-200 rounded-xl text-xs text-purple-700 font-semibold flex items-center gap-1.5">
             <div className="w-2 h-2 rounded-full bg-purple-500" />
             PHC Staff Mode

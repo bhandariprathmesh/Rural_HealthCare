@@ -17,6 +17,8 @@ import {
   getDoctors,
   getCurrentUser,
   dispatchSosAlert,
+  getSosAlertStatus,
+  cancelSosAlert,
 } from '../api/client';
 
 interface ActiveSosAlert {
@@ -176,6 +178,8 @@ export default function WorkerDashboard({
   const [selectionMode, setSelectionMode] =
     useState<'smart' | 'manual'>('smart');
   const [countdown, setCountdown] = useState(90);
+  const [activeSosId, setActiveSosId] = useState<string | null>(null);
+  const [liveSosStatus, setLiveSosStatus] = useState<any>(null);
   const [dbUser, setDbUser] = useState<any>(null);
 
   const today = new Date().toLocaleDateString('en-IN', {
@@ -343,15 +347,50 @@ export default function WorkerDashboard({
     onDutyDoctors.find(doctor => doctor.recommended) ||
     selectedDoctor;
 
+  // 5s Live Polling for SOS escalation status
+  useEffect(() => {
+    if (!activeSosId || !sosSent) return;
+
+    let isMounted = true;
+    const pollStatus = async () => {
+      try {
+        const data = await getSosAlertStatus(activeSosId);
+        if (isMounted && data) {
+          setLiveSosStatus(data);
+          if (typeof data.secondsRemaining === 'number') {
+            setCountdown(data.secondsRemaining);
+          }
+        }
+      } catch (err) {
+        console.warn('Polling SOS status error:', err);
+      }
+    };
+
+    pollStatus();
+    const interval = setInterval(pollStatus, 5000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [activeSosId, sosSent]);
+
+  // Sync active SOS from global state/backend
+  useEffect(() => {
+    if (activeSosAlert) {
+      setSosSent(true);
+      if (activeSosAlert.id && !activeSosId) {
+        setActiveSosId(activeSosAlert.id);
+      }
+    }
+  }, [activeSosAlert]);
+
+  // Local second-by-second decrement for smooth UI countdown
   useEffect(() => {
     if (!sosSent) return;
 
-    setCountdown(90);
-
     const timer = setInterval(() => {
-      setCountdown(current =>
-        current <= 1 ? 0 : current - 1
-      );
+      setCountdown(current => (current <= 1 ? 0 : current - 1));
     }, 1000);
 
     return () => clearInterval(timer);
@@ -363,10 +402,14 @@ export default function WorkerDashboard({
     ).padStart(2, '0')}`;
 
   const sosStatus =
-    activeSosAlert?.status || 'sent';
+    liveSosStatus?.status?.toLowerCase() ||
+    activeSosAlert?.status ||
+    'sent';
 
   const escalationLevel =
-    activeSosAlert?.escalationLevel || 0;
+    liveSosStatus?.escalationIndex ??
+    activeSosAlert?.escalationLevel ??
+    0;
 
   const simulatedStep = sosSent
     ? Math.min(
@@ -657,12 +700,26 @@ export default function WorkerDashboard({
                 <button
                   onClick={async () => {
                     try {
-                      await dispatchSosAlert({
-                        fromName: 'ASHA Worker',
+                      const activePt = patients.length > 0 ? patients[0] : null;
+                      const res = await dispatchSosAlert({
+                        fromName: dbUser?.fullName || 'ASHA Sunita Yadav',
                         role: 'ASHA Worker',
-                        patientHealthId: 'RHC-2026-8F4K92',
-                        location: 'Lunkaransar Sector 4',
+                        patientHealthId: activePt?.healthId || 'RHC-2026-8F4K92',
+                        location: activePt?.village ? `${activePt.village} Sector` : 'Lunkaransar Sector 4',
+                        targetedDoctorId: selectedDoctor?.id,
+                        vitalsSnapshot: {
+                          pulse: '118 bpm',
+                          bp: '85/55 mmHg',
+                          spo2: '91%',
+                        },
                       });
+                      if (res?.id) {
+                        setActiveSosId(res.id);
+                        setLiveSosStatus(res);
+                        if (typeof res.secondsRemaining === 'number') {
+                          setCountdown(res.secondsRemaining);
+                        }
+                      }
                     } catch (e) {
                       console.warn('Backend SOS dispatch failed, falling back to local state:', e);
                     }
@@ -695,12 +752,26 @@ export default function WorkerDashboard({
                 </span>
               </div>
 
-              <button
-                onClick={() => setSosSent(false)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                <Icon name="x" size={14} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    if (activeSosId) {
+                      try {
+                        await cancelSosAlert(activeSosId);
+                      } catch (e) {
+                        console.warn('Cancel SOS error:', e);
+                      }
+                    }
+                    setSosSent(false);
+                    setActiveSosId(null);
+                    setLiveSosStatus(null);
+                  }}
+                  className="px-2.5 py-1 bg-white border border-red-200 hover:bg-red-100 text-red-700 text-xs font-bold rounded-lg transition-colors flex items-center gap-1"
+                >
+                  <Icon name="x" size={12} />
+                  Cancel SOS
+                </button>
+              </div>
 
             </div>
 
@@ -768,8 +839,28 @@ export default function WorkerDashboard({
           </div>
 
           <div className="px-5 py-4 space-y-3">
+            {/* Live Escalation Banner Text */}
+            <div className="p-3 bg-red-100/70 border border-red-300 rounded-xl flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-pulse shrink-0" />
+                <span className="text-xs font-bold text-red-900">
+                  {liveSosStatus?.status === 'ACCEPTED'
+                    ? `✓ Accepted by ${liveSosStatus.acceptedBy || 'Attending Physician'} — Doctor Responding`
+                    : liveSosStatus?.status === 'DECLINED_ALL' || liveSosStatus?.isControlRoom
+                    ? `🚨 Control Room notified — Command Center dispatching ambulance & emergency team`
+                    : countdown <= 0
+                    ? `⚠️ Escalating to next physician on duty roster…`
+                    : liveSosStatus?.hopNumber > 1
+                    ? `⚠️ Escalating to ${liveSosStatus.currentResponderName} (${liveSosStatus.hopNumber} of ${liveSosStatus.totalHops})… ${formatCountdown(countdown)}`
+                    : `🚨 Alerting ${liveSosStatus?.currentResponderName || selectedDoctor.name}… ${formatCountdown(countdown)}`}
+                </span>
+              </div>
+              <span className="font-mono text-xs font-bold text-red-700 shrink-0 ml-2">
+                {liveSosStatus?.status === 'ACCEPTED' ? 'LIVE' : formatCountdown(countdown)}
+              </span>
+            </div>
 
-            {sosStatus === 'acknowledged' ? (
+            {sosStatus === 'accepted' || sosStatus === 'acknowledged' ? (
               <div className="flex items-center gap-3 p-3 bg-green-100 border border-green-300 rounded-xl">
                 <div className="w-9 h-9 bg-green-500 rounded-xl flex items-center justify-center shrink-0">
                   <Icon
@@ -781,78 +872,53 @@ export default function WorkerDashboard({
 
                 <div>
                   <div className="font-bold text-green-900 text-sm">
-                    SOS Acknowledged — Doctor Responding
+                    SOS Accepted — Doctor Responding
                   </div>
 
                   <div className="text-xs text-green-700">
-                    {recommendedDoctor?.name ||
-                      'Assigned doctor'}{' '}
-                    is responding ·{' '}
-                    {recommendedDoctor?.facility ||
-                      workerFacility}
+                    {liveSosStatus?.acceptedBy || recommendedDoctor?.name || 'Assigned doctor'} is responding · {recommendedDoctor?.facility || workerFacility}
                   </div>
                 </div>
               </div>
-            ) : sosStatus === 'declined' ||
-              (countdown === 0 &&
-                escalationLevel === 0) ? (
-
+            ) : sosStatus === 'declined_all' || liveSosStatus?.isControlRoom ? (
+              <div className="p-3 bg-red-600 text-white rounded-xl text-xs space-y-1">
+                <div className="font-bold flex items-center gap-1.5">
+                  <Icon name="shield" size={14} />
+                  Hospital Control Room & EMS (108) Alerted
+                </div>
+                <div>All local on-duty doctors declined or timed out. District Command Center has taken over emergency dispatch.</div>
+              </div>
+            ) : (
               <div className="space-y-2">
-
                 <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
                   <Icon
                     name="alert"
                     size={14}
                     className="shrink-0 mt-0.5 text-amber-600"
                   />
-
                   <span>
-                    <strong>
-                      {recommendedDoctor?.name ||
-                        'Assigned doctor'}{' '}
-                      has not acknowledged.
-                    </strong>{' '}
-                    Escalating to the next available
-                    emergency doctor.
+                    Alert active with 90-second response window. If the on-duty doctor does not acknowledge within 90 seconds, the system automatically advances to the next physician on the roster.
                   </span>
                 </div>
-
-                {escalationLevel >= 2 && (
-                  <div className="flex items-start gap-2 p-3 bg-red-100 border border-red-300 rounded-xl text-xs text-red-800">
-                    <Icon
-                      name="phone"
-                      size={14}
-                      className="shrink-0 mt-0.5"
-                    />
-
-                    <span>
-                      <strong>
-                        District Control Room alerted.
-                      </strong>{' '}
-                      Emergency operations have been
-                      notified.
-                    </span>
-                  </div>
-                )}
-
               </div>
+            )}
 
-            ) : (
+            {escalationLevel >= 2 && (
+              <div className="flex items-start gap-2 p-3 bg-red-100 border border-red-300 rounded-xl text-xs text-red-800">
+                <Icon
+                  name="phone"
+                  size={14}
+                  className="shrink-0 mt-0.5"
+                />
 
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-red-700">
-                  Awaiting acknowledgement from{' '}
+                <span>
                   <strong>
-                    {recommendedDoctor?.name ||
-                      'assigned doctor'}
-                  </strong>
+                    District Control Room alerted.
+                  </strong>{' '}
+                  Emergency operations have been
+                  notified.
                 </span>
-
-                <div className="font-mono text-lg font-bold text-red-700 bg-red-100 px-3 py-1 rounded-xl">
-                  {formatCountdown(countdown)}
-                </div>
               </div>
-
             )}
 
             <div>

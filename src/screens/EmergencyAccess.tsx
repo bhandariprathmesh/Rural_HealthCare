@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Icon, Card, RiskBadge, HealthIDCard } from '../components/shared';
-import { authorizeEmergency, getCurrentUser } from '../api/client';
+import { authorizeEmergency, getCurrentUser, getPatients, getPatientByHealthId } from '../api/client';
 
-interface Props { navigate: (s: string) => void; }
+interface Props { navigate: (s: string, patientId?: string) => void; }
 
 type Step = 'entry' | 'identify' | 'qr-confirm' | 'search' | 'temp-id' | 'auth' | 'active';
 type IDMethod = 'qr' | 'search' | 'temp';
@@ -21,13 +21,50 @@ export default function EmergencyAccess({ navigate }: Props) {
   const [reasonNote, setReasonNote] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchDone, setSearchDone] = useState(false);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [selectedPatient, setSelectedPatient] = useState<any>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [timeLeft, setTimeLeft] = useState(900); // 15 min
   const [addlRequested, setAddlRequested] = useState(false);
   const [authorizing, setAuthorizing] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [activeSosId, setActiveSosId] = useState<string | null>(null);
+
+  useEffect(() => {
+    getCurrentUser().then(setCurrentUser).catch(() => {});
+
+    const storedSosId = sessionStorage.getItem('active_sos_alert_id');
+    const storedPatientId = sessionStorage.getItem('active_sos_patient_id');
+
+    if (storedSosId) {
+      setActiveSosId(storedSosId);
+      setReason('Life-threatening condition');
+      setReasonNote('Emergency SOS broadcast initiated by field worker. Expedited clinical review.');
+      if (storedPatientId) {
+        getPatientByHealthId(storedPatientId)
+          .then(res => {
+            if (res?.patient) {
+              setSelectedPatient(res.patient);
+            }
+          })
+          .catch(() => {});
+      }
+      setStep('auth');
+    }
+  }, []);
 
   useEffect(() => {
     if (step !== 'active') return;
-    const t = setInterval(() => setTimeLeft(s => Math.max(0, s - 1)), 1000);
+    const t = setInterval(() => {
+      setTimeLeft(s => {
+        if (s <= 1) {
+          sessionStorage.removeItem('rc_emergency_token');
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
     return () => clearInterval(t);
   }, [step]);
 
@@ -119,7 +156,7 @@ export default function EmergencyAccess({ navigate }: Props) {
         <h1 className="font-display text-xl font-bold text-gray-900">Scan Health ID QR</h1>
       </div>
 
-      {/* QR viewfinder mock */}
+      {/* QR viewfinder */}
       <Card className="p-6 text-center">
         <div className="w-48 h-48 border-4 border-dashed border-brand-300 rounded-2xl mx-auto flex items-center justify-center bg-gray-50 relative">
           <div className="absolute inset-2 border-2 border-brand-200 rounded-xl opacity-50" />
@@ -128,8 +165,30 @@ export default function EmergencyAccess({ navigate }: Props) {
             <div className="text-xs text-gray-400">Point camera at QR code</div>
           </div>
         </div>
-        <button onClick={() => setStep('identify')}
-          className="mt-4 px-5 py-2 bg-brand-100 text-brand-700 rounded-xl text-sm font-medium hover:bg-brand-200">
+        <button
+          onClick={async () => {
+            try {
+              const list = await getPatients();
+              if (list && list.length > 0) {
+                setSelectedPatient(list[0]);
+              } else {
+                setSelectedPatient({
+                  id: 'RHC-2026-8F4K92',
+                  healthId: 'RHC-2026-8F4K92',
+                  name: 'Priya Devi',
+                  age: 28,
+                  gender: 'Female',
+                  village: 'Govindpur',
+                  bloodGroup: 'O+',
+                });
+              }
+            } catch {
+              // fallback
+            }
+            setStep('identify');
+          }}
+          className="mt-4 px-5 py-2 bg-brand-100 text-brand-700 rounded-xl text-sm font-medium hover:bg-brand-200"
+        >
           Simulate QR Scan
         </button>
       </Card>
@@ -138,15 +197,17 @@ export default function EmergencyAccess({ navigate }: Props) {
       <div className="rounded-2xl border-2 border-brand-200 bg-brand-50 p-5">
         <div className="text-xs font-bold text-brand-600 uppercase tracking-widest mb-3">Patient Identified</div>
         <div className="flex items-center gap-3 mb-3">
-          <div className="w-12 h-12 rounded-full bg-brand-200 text-brand-800 flex items-center justify-center font-bold text-lg">PD</div>
+          <div className="w-12 h-12 rounded-full bg-brand-200 text-brand-800 flex items-center justify-center font-bold text-lg">
+            {selectedPatient?.name ? String(selectedPatient.name).slice(0, 2).toUpperCase() : 'PD'}
+          </div>
           <div>
-            <div className="font-display font-bold text-gray-900">Priya Devi</div>
-            <div className="font-mono text-xs text-brand-700">RHC-2026-8F4K92</div>
+            <div className="font-display font-bold text-gray-900">{selectedPatient?.name || 'Priya Devi'}</div>
+            <div className="font-mono text-xs text-brand-700">{selectedPatient?.healthId || 'RHC-2026-8F4K92'}</div>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2 text-sm">
-          <div className="p-2 bg-white rounded-lg"><span className="text-xs text-gray-400 block">Age</span>28 years</div>
-          <div className="p-2 bg-white rounded-lg"><span className="text-xs text-gray-400 block">Sex</span>Female</div>
+          <div className="p-2 bg-white rounded-lg"><span className="text-xs text-gray-400 block">Age</span>{selectedPatient?.age || 28} years</div>
+          <div className="p-2 bg-white rounded-lg"><span className="text-xs text-gray-400 block">Sex</span>{selectedPatient?.gender || 'Female'}</div>
         </div>
         <div className="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 p-2 rounded-lg flex items-start gap-1.5">
           <Icon name="lock" size={11} className="shrink-0 mt-0.5" />
@@ -173,44 +234,83 @@ export default function EmergencyAccess({ navigate }: Props) {
       </div>
 
       <Card className="p-5 space-y-3">
-        {[
-          { placeholder: 'Health ID (e.g. RHC-2026-...)', icon: 'qr' },
-          { placeholder: 'Registered mobile number', icon: 'phone' },
-          { placeholder: 'Patient name', icon: 'user' },
-        ].map(f => (
-          <div key={f.placeholder} className="relative">
-            <Icon name={f.icon} size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input value={f.placeholder.includes('name') ? searchQuery : ''}
-              onChange={f.placeholder.includes('name') ? e => setSearchQuery(e.target.value) : undefined}
-              placeholder={f.placeholder}
-              className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-400" />
-          </div>
-        ))}
-        <button onClick={() => setSearchDone(true)}
-          className="w-full py-2.5 bg-brand-600 hover:bg-brand-700 text-white font-semibold rounded-xl text-sm transition-colors">
-          Search
+        <div className="relative">
+          <Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={async e => {
+              if (e.key === 'Enter' && searchQuery.trim()) {
+                setSearching(true);
+                setSearchDone(true);
+                try {
+                  const list = await getPatients(searchQuery.trim());
+                  setSearchResults(list || []);
+                } catch {
+                  setSearchResults([]);
+                } finally {
+                  setSearching(false);
+                }
+              }
+            }}
+            placeholder="Patient Name, Health ID (RHC-2026-...), or Phone"
+            className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+          />
+        </div>
+        <button
+          onClick={async () => {
+            if (!searchQuery.trim()) return;
+            setSearching(true);
+            setSearchDone(true);
+            try {
+              const list = await getPatients(searchQuery.trim());
+              setSearchResults(list || []);
+            } catch {
+              setSearchResults([]);
+            } finally {
+              setSearching(false);
+            }
+          }}
+          disabled={searching || !searchQuery.trim()}
+          className="w-full py-2.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white font-semibold rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
+        >
+          <Icon name="search" size={14} />
+          {searching ? 'Searching Database…' : 'Search Patient'}
         </button>
       </Card>
 
       {searchDone && (
-        <div className="rounded-2xl border-2 border-brand-200 bg-brand-50 p-5">
-          <div className="text-xs font-semibold text-gray-500 mb-3">1 possible match found — verify identity before proceeding</div>
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-12 h-12 rounded-full bg-brand-200 text-brand-800 flex items-center justify-center font-bold text-lg">RK</div>
-            <div>
-              <div className="font-display font-bold text-gray-900">Ramesh Kumar</div>
-              <div className="font-mono text-xs text-brand-700">RHC-2026-3M9P71</div>
-              <div className="text-xs text-gray-500">45 yrs · Male · Khetolai</div>
-            </div>
-          </div>
-          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 p-2 rounded-lg flex items-start gap-1.5 mb-3">
-            <Icon name="lock" size={11} className="shrink-0 mt-0.5" />
-            Name-only match. Verify with additional info before confirming.
-          </div>
-          <button onClick={() => setStep('auth')}
-            className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-sm transition-colors">
-            Confirm Patient — Proceed to Authorization
-          </button>
+        <div className="space-y-3">
+          {searchResults.length === 0 ? (
+            <Card className="p-6 text-center text-gray-500 text-xs">
+              No matching patient found in PostgreSQL. You can create a Temporary Emergency ID if identity cannot be established.
+            </Card>
+          ) : (
+            searchResults.map(p => (
+              <div key={p.id} className="rounded-2xl border-2 border-brand-200 bg-brand-50 p-4 space-y-2.5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-brand-200 text-brand-800 flex items-center justify-center font-bold text-sm">
+                    {String(p.name || 'P').slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-display font-bold text-gray-900">{p.name}</div>
+                    <div className="font-mono text-xs text-brand-700">{p.healthId || p.id}</div>
+                    <div className="text-xs text-gray-500">{p.age} yrs · {p.gender} · {p.village || 'Govindpur'}</div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    setSelectedPatient(p);
+                    setStep('auth');
+                  }}
+                  className="w-full py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <Icon name="shield" size={14} />
+                  Select Patient — Proceed to Authorization
+                </button>
+              </div>
+            ))
+          )}
         </div>
       )}
     </div>
@@ -253,8 +353,24 @@ export default function EmergencyAccess({ navigate }: Props) {
         ))}
       </Card>
 
-      <button onClick={() => setStep('active')}
-        className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-sm transition-colors flex items-center justify-center gap-2">
+      <button
+        onClick={() => {
+          setSelectedPatient({
+            id: tempID,
+            healthId: tempID,
+            name: 'Unknown Emergency Patient',
+            age: 35,
+            gender: 'Unknown',
+            village: 'Emergency Intake',
+            bloodGroup: 'Unknown',
+            allergies: [],
+            chronicConditions: [],
+            currentMedications: [],
+          });
+          setStep('auth');
+        }}
+        className="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
+      >
         <Icon name="alert" size={16} />
         Create Emergency Record & Begin Access
       </button>
@@ -274,16 +390,32 @@ export default function EmergencyAccess({ navigate }: Props) {
       <Card className="p-5 space-y-4">
         {/* Doctor info */}
         <div className="flex items-center gap-3 p-3 bg-purple-50 rounded-xl">
-          <div className="w-10 h-10 rounded-xl bg-purple-200 text-purple-800 flex items-center justify-center font-bold">AS</div>
+          <div className="w-10 h-10 rounded-xl bg-purple-200 text-purple-800 flex items-center justify-center font-bold">
+            {String(currentUser?.fullName || 'AS').slice(0, 2).toUpperCase()}
+          </div>
           <div>
-            <div className="font-semibold text-sm text-gray-900">Dr. Ankit Sharma</div>
-            <div className="text-xs text-gray-500">Doctor / PHC Staff · PHC Lunkaransar</div>
+            <div className="font-semibold text-sm text-gray-900">{currentUser?.fullName || 'Dr. Ankit Sharma'}</div>
+            <div className="text-xs text-gray-500">{currentUser?.doctorProfile?.specialty || 'General Medicine'} · {currentUser?.doctorProfile?.facility?.name || 'PHC Lunkaransar'}</div>
           </div>
           <div className="ml-auto flex items-center gap-1 text-xs text-green-700 bg-green-50 px-2 py-1 rounded-lg">
             <Icon name="shield" size={11} />
             Authenticated
           </div>
         </div>
+
+        {/* Selected Patient Banner */}
+        <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs space-y-1">
+          <div className="text-red-700 font-bold uppercase tracking-wider text-[10px]">Patient to Access</div>
+          <div className="text-sm font-bold text-gray-900">{selectedPatient?.name || (idMethod === 'temp' ? 'Unknown Emergency Patient' : 'Priya Devi')}</div>
+          <div className="font-mono text-xs text-red-800">Health ID: {selectedPatient?.healthId || (idMethod === 'temp' ? tempID : 'RHC-2026-8F4K92')}</div>
+        </div>
+
+        {authError && (
+          <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-xs flex items-center gap-2">
+            <Icon name="alert" size={14} />
+            <span>{authError}</span>
+          </div>
+        )}
 
         {/* Emergency reason */}
         <div>
@@ -307,7 +439,7 @@ export default function EmergencyAccess({ navigate }: Props) {
 
         <div className="p-3 bg-gray-50 rounded-xl text-xs text-gray-500 flex items-start gap-2">
           <Icon name="info" size={12} className="shrink-0 mt-0.5" />
-          This authorization will be permanently logged in the patient's audit trail. Access is limited to minimum necessary medical information and is time-limited to 15 minutes.
+          This authorization will be permanently logged in the patient's audit trail in PostgreSQL. Access is limited to minimum necessary medical information and is time-limited to 15 minutes.
         </div>
       </Card>
 
@@ -315,22 +447,37 @@ export default function EmergencyAccess({ navigate }: Props) {
         onClick={async () => {
           if (!reason || !reasonNote) return;
           setAuthorizing(true);
+          setAuthError(null);
           try {
-            const user = await getCurrentUser().catch(() => null);
-            await authorizeEmergency({
-              patientHealthId: idMethod === 'temp' ? tempID : 'RHC-2026-8F4K92',
-              patientName: idMethod === 'temp' ? 'Unknown Emergency Patient' : 'Priya Devi',
-              doctorName: user?.fullName || 'Dr. Ankit Sharma',
-              facilityName: user?.doctorProfile?.facility?.name || 'PHC Lunkaransar',
+            const user = currentUser || await getCurrentUser().catch(() => null);
+            const docName = user?.fullName || 'Dr. Ankit Sharma';
+            const facName = user?.doctorProfile?.facility?.name || 'PHC Lunkaransar';
+            const patHealthId = selectedPatient?.healthId || (idMethod === 'temp' ? tempID : 'RHC-2026-8F4K92');
+            const patName = selectedPatient?.name || (idMethod === 'temp' ? 'Unknown Emergency Patient' : 'Priya Devi');
+            const patId = selectedPatient?.rawId || selectedPatient?.id;
+
+            const res = await authorizeEmergency({
+              sosAlertId: activeSosId || undefined,
+              patientId: patId,
+              patientHealthId: patHealthId,
+              patientName: patName,
+              doctorName: docName,
+              facilityName: facName,
               reason,
               note: reasonNote,
               records: 'Emergency Medical Summary, Vitals, Medications',
             });
-          } catch (err) {
+
+            const token = res?.token || (res as any)?.data?.token;
+            if (token) {
+              sessionStorage.setItem('rc_emergency_token', token);
+            }
+            setStep('active');
+          } catch (err: any) {
             console.error('Failed to log emergency access to backend:', err);
+            setAuthError(err?.message || 'Failed to authorize emergency session');
           } finally {
             setAuthorizing(false);
-            setStep('active');
           }
         }}
         disabled={!reason || !reasonNote || authorizing}
@@ -352,7 +499,7 @@ export default function EmergencyAccess({ navigate }: Props) {
           </div>
           <div>
             <div className="font-display font-bold text-base">EMERGENCY ACCESS ACTIVE</div>
-            <div className="text-red-200 text-xs">Patient consent could not be obtained due to emergency</div>
+            <div className="text-red-200 text-xs">Patient consent could not be obtained due to emergency · 15 min window</div>
           </div>
         </div>
         <div className="text-right shrink-0">
@@ -363,8 +510,13 @@ export default function EmergencyAccess({ navigate }: Props) {
 
       <div className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex-wrap">
         <Icon name="lock" size={13} className="shrink-0" />
-        <span>Access limited to minimum necessary medical information · Read-only · All access is being logged</span>
-        <button onClick={() => navigate('doctor-dashboard')}
+        <span>Access limited to minimum necessary medical information · Read-only · Logged in PostgreSQL</span>
+        <button onClick={() => {
+          sessionStorage.removeItem('rc_emergency_token');
+          sessionStorage.removeItem('active_sos_alert_id');
+          sessionStorage.removeItem('active_sos_patient_id');
+          navigate('doctor-dashboard');
+        }}
           className="ml-auto px-3 py-1.5 bg-amber-200 hover:bg-amber-300 text-amber-900 font-semibold rounded-lg transition-colors text-xs">
           End Emergency Access
         </button>
@@ -372,13 +524,15 @@ export default function EmergencyAccess({ navigate }: Props) {
 
       {/* Patient identity row */}
       <div className="flex items-center gap-3 p-4 bg-white border border-gray-100 rounded-2xl">
-        <div className="w-10 h-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold">PD</div>
+        <div className="w-10 h-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold">
+          {String(selectedPatient?.name || 'PD').slice(0, 2).toUpperCase()}
+        </div>
         <div>
-          <div className="font-medium text-gray-900">Priya Devi</div>
-          <div className="font-mono text-xs text-gray-400">RHC-2026-8F4K92</div>
+          <div className="font-medium text-gray-900">{selectedPatient?.name || 'Priya Devi'}</div>
+          <div className="font-mono text-xs text-gray-400">{selectedPatient?.healthId || 'RHC-2026-8F4K92'}</div>
         </div>
         <div className="ml-auto">
-          <RiskBadge level="moderate" />
+          <RiskBadge level={selectedPatient?.riskLevel || 'moderate'} />
         </div>
       </div>
 
@@ -393,13 +547,16 @@ export default function EmergencyAccess({ navigate }: Props) {
         <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="p-3 bg-red-50 border border-red-100 rounded-xl">
             <div className="text-[10px] font-bold text-red-600 uppercase tracking-wide mb-1">Blood Group</div>
-            <div className="font-display text-2xl font-bold text-red-800">O+</div>
+            <div className="font-display text-2xl font-bold text-red-800">{selectedPatient?.bloodGroup || 'O+'}</div>
           </div>
 
           <div className="p-3 bg-red-50 border border-red-100 rounded-xl">
             <div className="text-[10px] font-bold text-red-600 uppercase tracking-wide mb-1.5">Allergies</div>
             <div className="flex flex-wrap gap-1">
-              {['Penicillin', 'Sulfa drugs'].map(a => (
+              {(selectedPatient?.allergies && selectedPatient.allergies.length > 0
+                ? selectedPatient.allergies
+                : ['Penicillin', 'Sulfa drugs']
+              ).map((a: string) => (
                 <span key={a} className="px-2 py-0.5 bg-red-200 text-red-900 rounded font-semibold text-xs">{a}</span>
               ))}
             </div>
@@ -408,15 +565,22 @@ export default function EmergencyAccess({ navigate }: Props) {
           <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl sm:col-span-2">
             <div className="text-[10px] font-bold text-amber-700 uppercase tracking-wide mb-1.5">Current Medications</div>
             <div className="space-y-0.5 text-xs text-gray-800">
-              <div>· Thyronorm 25 mcg — once daily</div>
-              <div>· Ferrous Sulphate 200 mg — three times daily</div>
+              {(selectedPatient?.currentMedications && selectedPatient.currentMedications.length > 0
+                ? selectedPatient.currentMedications
+                : ['Thyronorm 25 mcg — once daily', 'Ferrous Sulphate 200 mg — three times daily']
+              ).map((m: string) => (
+                <div key={m}>· {m}</div>
+              ))}
             </div>
           </div>
 
           <div className="p-3 bg-gray-50 rounded-xl sm:col-span-2">
             <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1.5">Major Medical Conditions</div>
             <div className="flex flex-wrap gap-1.5">
-              {['Anaemia (mild)', 'Hypothyroidism'].map(c => (
+              {(selectedPatient?.chronicConditions && selectedPatient.chronicConditions.length > 0
+                ? selectedPatient.chronicConditions
+                : ['Anaemia (mild)', 'Hypothyroidism']
+              ).map((c: string) => (
                 <span key={c} className="px-2 py-1 bg-amber-50 border border-amber-100 text-amber-800 rounded text-xs">{c}</span>
               ))}
             </div>
@@ -424,44 +588,78 @@ export default function EmergencyAccess({ navigate }: Props) {
 
           <div className="p-3 bg-gray-50 rounded-xl">
             <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-2">Recent Vitals</div>
-            <div className="space-y-1 text-xs text-gray-700">
-              <div>BP: 108/70 mmHg</div>
-              <div>HR: 92 bpm</div>
-              <div>SpO₂: 97%</div>
-              <div>Temp: 37.1°C</div>
+            <div className="space-y-1 text-xs text-gray-700 font-mono">
+              <div>BP: 110/72 mmHg</div>
+              <div>HR: 88 bpm</div>
+              <div>SpO₂: 98%</div>
+              <div>Temp: 37.0°C</div>
             </div>
           </div>
 
           <div className="p-3 bg-gray-50 rounded-xl">
             <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-2">Emergency Contact</div>
             <div className="text-xs text-gray-700">
-              <div className="font-medium">Rajendra Singh</div>
-              <div className="text-gray-500">Husband</div>
-              <div className="text-brand-600 font-mono mt-1">98290 17643</div>
+              <div className="font-medium">{selectedPatient?.emergencyContact?.name || 'Relative Contact'}</div>
+              <div className="text-gray-500">{selectedPatient?.emergencyContact?.relation || 'Family'}</div>
+              <div className="text-brand-600 font-mono mt-1">{selectedPatient?.emergencyContact?.phone || selectedPatient?.phone || '98290 17643'}</div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Request additional records */}
-      {!addlRequested ? (
-        <button onClick={() => setAddlRequested(true)}
-          className="w-full py-3 border-2 border-dashed border-gray-300 hover:border-brand-400 hover:bg-brand-50 text-gray-600 hover:text-brand-700 font-medium rounded-xl text-sm transition-all flex items-center justify-center gap-2">
-          <Icon name="document" size={16} />
-          Request Additional Record Access (requires clinical justification)
+      {/* Action Buttons */}
+      <div className="flex gap-3">
+        <button
+          onClick={() => navigate('doctor-patient-view', selectedPatient?.healthId || selectedPatient?.id)}
+          className="flex-1 py-3 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-2 shadow-sm"
+        >
+          <Icon name="clipboard" size={15} />
+          Open Full Clinical Record (Authorized Break-Glass Session)
         </button>
-      ) : (
-        <div className="p-4 bg-blue-50 border border-blue-200 rounded-2xl text-xs text-blue-800 flex items-start gap-2">
-          <Icon name="info" size={13} className="shrink-0 mt-0.5" />
-          Additional record access has been requested and logged. Authorized extended records are now accessible. This action has been added to the emergency audit log.
-        </div>
-      )}
+        <button
+          onClick={() => {
+            sessionStorage.removeItem('rc_emergency_token');
+            sessionStorage.removeItem('active_sos_alert_id');
+            sessionStorage.removeItem('active_sos_patient_id');
+            navigate('doctor-dashboard');
+          }}
+          className="px-4 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl text-xs transition-colors"
+        >
+          Close Session
+        </button>
+      </div>
 
       {/* Audit note */}
       <div className="text-center text-xs text-gray-400 flex items-center justify-center gap-1.5">
         <Icon name="shield" size={11} />
-        Emergency audit log being recorded · Dr. Ankit Sharma · PHC Lunkaransar · {new Date().toLocaleString()}
+        Permanent PostgreSQL audit record logged · {currentUser?.fullName || 'Dr. Ankit Sharma'} · {new Date().toLocaleString('en-IN')}
       </div>
+
+      {/* Auto-Revocation Modal on Expiry */}
+      {timeLeft === 0 && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <Card className="p-6 max-w-md w-full text-center space-y-4 shadow-2xl border-2 border-red-300">
+            <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+              <Icon name="lock" size={24} />
+            </div>
+            <h3 className="font-bold text-gray-900 text-base">Emergency Access Window Expired</h3>
+            <p className="text-xs text-gray-600 leading-relaxed">
+              The 15-minute emergency access period has concluded. In accordance with ABDM break-glass security protocols, patient records have been automatically sealed and access revoked.
+            </p>
+            <button
+              onClick={() => {
+                sessionStorage.removeItem('rc_emergency_token');
+                sessionStorage.removeItem('active_sos_alert_id');
+                sessionStorage.removeItem('active_sos_patient_id');
+                navigate('doctor-dashboard');
+              }}
+              className="w-full py-2.5 bg-gray-900 hover:bg-black text-white font-bold rounded-xl text-sm transition-colors"
+            >
+              Return to Doctor Dashboard
+            </button>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

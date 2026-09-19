@@ -1,9 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import { Prisma, ConsentStatus, RiskLevel } from '@prisma/client';
+import bcrypt from 'bcryptjs';
+import { Prisma, Role, ConsentStatus, RiskLevel, ReferralStatus } from '@prisma/client';
+import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma.js';
 import { abhaService } from '../services/abdm/abha.service.js';
 import { AppError } from '../middleware/error.js';
+import { checkPatientAccess, isScopePermitted } from '../services/accessControl.service.js';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'ruralcare_jwt_super_secret_key_change_in_production_2026';
 
 function generateHealthId(): string {
   const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -137,7 +142,19 @@ const registerPatientSchema = z.object({
 
   currentMedications: z.array(z.string()).optional(),
 
-  abhaAddress: z.string().optional(),
+  pin: z.string().min(4, 'PIN must be at least 4 digits').optional().default('1234'),
+
+  abhaAddress: z
+    .string()
+    .optional()
+    .nullable()
+    .transform((val) => (val && val.trim() ? val.trim() : undefined)),
+
+  abhaNumber: z
+    .string()
+    .optional()
+    .nullable()
+    .transform((val) => (val && val.trim() ? val.trim() : undefined)),
 
   healthWorkerId: z.string().optional(),
 
@@ -301,13 +318,75 @@ export async function registerPatient(
     const timestampStr =
       now.toISOString();
 
+    const callerUser = (req as any).user;
+    let assignedWorkerId = input.healthWorkerId;
+    let assignedWorkerName = input.healthWorkerName;
+
+    if (callerUser && (callerUser.role === 'WORKER' || callerUser.workerId)) {
+      if (!assignedWorkerId && callerUser.workerId) {
+        assignedWorkerId = callerUser.workerId;
+      }
+      if (!assignedWorkerName && callerUser.fullName) {
+        assignedWorkerName = callerUser.fullName;
+      }
+    }
+
+    if (assignedWorkerId && !assignedWorkerName) {
+      const w = await prisma.worker.findUnique({ where: { id: assignedWorkerId } });
+      if (w) assignedWorkerName = w.name;
+    } else if (!assignedWorkerId && assignedWorkerName) {
+      const w = await prisma.worker.findFirst({
+        where: { name: { contains: assignedWorkerName, mode: 'insensitive' } },
+      });
+      if (w) assignedWorkerId = w.id;
+    }
+
+    const pin = input.pin || '1234';
+
     const result =
       await prisma.$transaction(
         async (tx) => {
+          const pinHash = await bcrypt.hash(pin, 10);
+          const defaultEmail = `${input.phone}@ruralcare.in`;
+
+          let user = await tx.user.findFirst({
+            where: { phone: input.phone },
+          });
+
+          if (!user) {
+            const existingEmail = await tx.user.findUnique({ where: { email: defaultEmail } });
+            const finalEmail = existingEmail
+              ? `patient.${Date.now()}.${input.phone}@ruralcare.in`
+              : defaultEmail;
+
+            user = await tx.user.create({
+              data: {
+                email: finalEmail,
+                phone: input.phone,
+                fullName: input.name,
+                role: Role.PATIENT,
+                pinHash,
+                passwordHash: pinHash,
+              },
+            });
+          } else {
+            user = await tx.user.update({
+              where: { id: user.id },
+              data: {
+                fullName: input.name,
+                role: Role.PATIENT,
+                pinHash,
+                passwordHash: pinHash,
+              },
+            });
+          }
+
           const patient =
             await tx.patient.create({
               data: {
                 healthId,
+
+                userId: user.id,
 
                 abhaAddress:
                   finalAbhaAddress,
@@ -367,18 +446,18 @@ export async function registerPatient(
                   RiskLevel.LOW,
 
                 healthWorkerId:
-                  input.healthWorkerId ||
+                  assignedWorkerId ||
                   null,
 
                 healthWorkerName:
-                  input.healthWorkerName ||
+                  assignedWorkerName ||
                   'Community Health Worker',
 
                 registeredAt:
                   registeredAtDateStr,
 
                 consentStatus:
-                  ConsentStatus.GRANTED,
+                  ConsentStatus.TEMPORARY,
 
                 vaccinationStatus:
                   'Fully vaccinated',
@@ -404,88 +483,6 @@ export async function registerPatient(
               }
             );
           }
-
-          const consentRandomSuffix =
-            Math.floor(
-              1000 +
-              Math.random() * 9000
-            );
-
-          const consentCode =
-            `CA-2026-${consentRandomSuffix}`;
-
-          const consentPurpose =
-            input.consent.purpose ||
-            'General healthcare coordination and longitudinal health record';
-
-          const consentScope =
-            input.consent.dataScope ||
-            [
-              'Consultations',
-              'Vitals',
-              'Prescriptions',
-              'DiagnosticReports',
-            ];
-
-          await tx.consentArtifact.create({
-            data: {
-              consentCode,
-
-              patientId:
-                patient.id,
-
-              grantedTo:
-                input.healthWorkerName ||
-                'RuralCare Clinical Network',
-
-              role:
-                'Community Health Worker',
-
-              organization:
-                'RuralCare Primary Health Network',
-
-              status:
-                ConsentStatus.GRANTED,
-
-              purpose:
-                consentPurpose,
-
-              dataScope:
-                consentScope,
-
-              grantedAt:
-                timestampStr,
-
-              expiresAt:
-                new Date(
-                  Date.now() +
-                  365 *
-                  24 *
-                  60 *
-                  60 *
-                  1000
-                ).toISOString(),
-
-              hiuId:
-                'HIU-RURALCARE-01',
-
-              hipId:
-                'HIP-HFR-MH-00103',
-
-              consentManagerId:
-                'mock-abdm-cm@sbx',
-
-              signature:
-                `MOCK_SHA256_SIG_${Buffer.from(
-                  consentCode +
-                  timestampStr
-                )
-                  .toString('hex')
-                  .slice(0, 32)}`,
-
-              isMock: true,
-            },
-          });
 
           const auditCode =
             `AUD-${Date.now()
@@ -513,16 +510,16 @@ export async function registerPatient(
                 'RuralCare Primary Health Network',
 
               action:
-                'PATIENT_REGISTERED_CONSENT_GRANTED',
+                'PATIENT_REGISTERED',
 
               dataAccessed:
-                consentScope,
+                ['Identity', 'Demographics'],
 
               timestamp:
                 timestampStr,
 
               purpose:
-                consentPurpose,
+                'Patient account creation and assigned care team linkage in ABDM network',
             },
           });
 
@@ -581,8 +578,20 @@ export async function registerPatient(
           registeredAt:
             result.registeredAt,
 
+          healthWorkerId:
+            result.healthWorkerId,
+
+          healthWorkerName:
+            result.healthWorkerName,
+
           consentStatus:
             result.consentStatus,
+        },
+        credentials: {
+          phone: input.phone,
+          pin: pin,
+          healthId: result.healthId,
+          name: result.name,
         },
       },
     });
@@ -601,9 +610,10 @@ export async function getPatients(
   next: NextFunction
 ): Promise<void> {
   try {
+    const qRaw = req.query.q || req.query.search;
     const q =
-      typeof req.query.q === 'string'
-        ? req.query.q.trim()
+      typeof qRaw === 'string'
+        ? qRaw.trim()
         : '';
 
     const risk =
@@ -702,27 +712,34 @@ export async function getPatientById(
         },
 
         include: {
+          familyDoctor: {
+            include: {
+              facility: true,
+            },
+          },
+          healthWorker: true,
           consentEntries: {
-            take: 5,
             orderBy: {
               createdAt: 'desc',
             },
           },
-
+          auditEntries: {
+            orderBy: {
+              createdAt: 'desc',
+            },
+          },
           consultations: {
-            take: 5,
+            take: 20,
             orderBy: {
               createdAt: 'desc',
             },
           },
-
           referrals: {
-            take: 5,
+            take: 20,
             orderBy: {
               createdAt: 'desc',
             },
           },
-
           aiAssessments: {
             orderBy: {
               createdAt: 'desc',
@@ -738,13 +755,194 @@ export async function getPatientById(
       );
     }
 
+    const user = (req as any).user;
+    const emergencyToken = (req.headers['x-emergency-token'] || req.headers['emergency-token']) as string | undefined;
+
+    const accessResult = await checkPatientAccess({
+      user,
+      patientIdOrHealthId: id,
+      emergencyToken,
+    });
+
+    const hasAccess = accessResult.hasAccess;
+    const activeConsent = accessResult.activeConsent;
+    const pendingRequest = accessResult.pendingRequest;
+
+    if (!hasAccess) {
+      const sanitizedPatient = {
+        ...patient,
+        allergies: [],
+        chronicConditions: [],
+        currentMedications: [],
+        consultations: [],
+        referrals: [],
+        consentEntries: [],
+        auditEntries: [],
+        hasAccess: false,
+        activeConsent: null,
+        pendingRequest: pendingRequest
+          ? {
+              id: pendingRequest.id,
+              consentCode: pendingRequest.consentCode,
+              purpose: pendingRequest.purpose,
+              dataScope: pendingRequest.dataScope,
+              expiresAt: pendingRequest.expiresAt,
+              createdAt: pendingRequest.createdAt,
+            }
+          : null,
+      };
+
+      res.status(200).json({
+        success: true,
+        data: {
+          patient: sanitizedPatient,
+          hasAccess: false,
+          activeConsent: null,
+          pendingRequest: sanitizedPatient.pendingRequest,
+          consultations: [],
+          referrals: [],
+          consents: [],
+          auditLogs: [],
+        },
+      });
+      return;
+    }
+
+    let filteredConsultations = patient.consultations;
+    const hasConsultScope = isScopePermitted(accessResult.allowedScopes, 'Consultations');
+    if (!hasConsultScope) {
+      filteredConsultations = [];
+    }
+
     res.status(200).json({
       success: true,
       data: {
-        patient,
-        consultations: patient.consultations,
+        patient: {
+          ...patient,
+          hasAccess: true,
+          activeConsent: activeConsent
+            ? {
+                id: activeConsent.id,
+                consentCode: activeConsent.consentCode,
+                grantedTo: activeConsent.grantedTo,
+                purpose: activeConsent.purpose,
+                dataScope: activeConsent.dataScope,
+                expiresAt: activeConsent.expiresAt,
+              }
+            : null,
+          pendingRequest: null,
+        },
+        hasAccess: true,
+        activeConsent: activeConsent
+          ? {
+              id: activeConsent.id,
+              consentCode: activeConsent.consentCode,
+              grantedTo: activeConsent.grantedTo,
+              purpose: activeConsent.purpose,
+              dataScope: activeConsent.dataScope,
+              expiresAt: activeConsent.expiresAt,
+            }
+          : null,
+        pendingRequest: null,
+        consultations: filteredConsultations,
         referrals: patient.referrals,
+        consents: patient.consentEntries,
+        auditLogs: patient.auditEntries,
       },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+const requestPatientAccessSchema = z.object({
+  duration: z.enum(['1 day', '1 week', '1 month', '3 months']).default('1 month'),
+  reason: z.string().min(2, 'Reason for access is required'),
+  dataScope: z.array(z.string()).min(1, 'At least one data scope item is required'),
+});
+
+/**
+ * Request access to a patient record.
+ * POST /api/v1/patients/:id/access-requests
+ */
+export async function requestPatientAccess(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const rawId = req.params.id;
+    const id = Array.isArray(rawId) ? rawId[0] : rawId;
+    const user = (req as any).user;
+
+    if (!user) {
+      throw new AppError('Authentication required to request patient access.', 401);
+    }
+
+    const { duration, reason, dataScope } = requestPatientAccessSchema.parse(req.body);
+
+    const patient = await prisma.patient.findFirst({
+      where: {
+        OR: [{ id }, { healthId: id }, { abhaAddress: id }],
+      },
+    });
+
+    if (!patient) {
+      throw new AppError(`Patient '${id}' not found`, 404);
+    }
+
+    const now = new Date();
+    let days = 30;
+    if (duration === '1 day') days = 1;
+    else if (duration === '1 week') days = 7;
+    else if (duration === '1 month') days = 30;
+    else if (duration === '3 months') days = 90;
+
+    const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+    const timestampStr = now.toISOString();
+
+    const consentRandomSuffix = Math.floor(1000 + Math.random() * 9000);
+    const consentCode = `REQ-2026-${consentRandomSuffix}`;
+
+    const consentArtifact = await prisma.consentArtifact.create({
+      data: {
+        consentCode,
+        patientId: patient.id,
+        grantedTo: user.fullName || 'Health Worker',
+        role: user.role === 'DOCTOR' ? 'Doctor' : 'Community Health Worker',
+        organization: 'RuralCare Primary Health Network',
+        status: ConsentStatus.TEMPORARY,
+        purpose: reason,
+        dataScope,
+        grantedAt: timestampStr,
+        expiresAt,
+        hiuId: 'HIU-RURALCARE-01',
+        hipId: 'HIP-HFR-MH-00103',
+        consentManagerId: 'mock-abdm-cm@sbx',
+        isMock: true,
+      },
+    });
+
+    const auditCode = `AUD-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
+    await prisma.auditLog.create({
+      data: {
+        auditCode,
+        patientId: patient.id,
+        accessorId: user.id,
+        accessorName: user.fullName || 'Health Worker',
+        accessorRole: user.role || 'WORKER',
+        organization: 'RuralCare Primary Health Network',
+        action: 'ACCESS_REQUESTED',
+        dataAccessed: dataScope,
+        timestamp: timestampStr,
+        purpose: reason,
+      },
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Access request submitted successfully. Awaiting patient approval.',
+      data: { request: consentArtifact },
     });
   } catch (err) {
     next(err);
@@ -796,6 +994,202 @@ export async function getPatientByPhone(
     res.status(200).json({
       success: true,
       data: { patient },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Update patient profile (demographics, emergency info, Family Doctor, ASHA worker).
+ * PATCH /api/v1/patients/:id
+ */
+export async function updatePatient(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const rawId = req.params.id;
+    const id = Array.isArray(rawId) ? rawId[0] : rawId;
+    const user = (req as any).user;
+
+    const existing = await prisma.patient.findFirst({
+      where: {
+        OR: [{ id }, { healthId: id }, { abhaAddress: id }],
+      },
+    });
+
+    if (!existing) {
+      throw new AppError(`Patient '${id}' not found`, 404);
+    }
+
+    // Scoped Auth check: If caller is a PATIENT, verify ownership
+    if (user && user.role === 'PATIENT' && existing.userId && user.id !== existing.userId) {
+      throw new AppError('Unauthorized: You can only edit your own profile.', 403);
+    }
+
+    const {
+      bloodGroup,
+      allergies,
+      chronicConditions,
+      currentMedications,
+      emergencyContact,
+      familyDoctorId,
+      healthWorkerId,
+      phone,
+      village,
+      district,
+      state,
+      address,
+    } = req.body;
+
+    let familyDoctorName = existing.familyDoctorName;
+    if (familyDoctorId !== undefined) {
+      if (familyDoctorId) {
+        const doc = await prisma.doctor.findUnique({ where: { id: familyDoctorId } });
+        if (doc) {
+          familyDoctorName = doc.name;
+        }
+      } else {
+        familyDoctorName = null;
+      }
+    }
+
+    let healthWorkerName = existing.healthWorkerName;
+    if (healthWorkerId !== undefined) {
+      if (healthWorkerId) {
+        const wrk = await prisma.worker.findUnique({ where: { id: healthWorkerId } });
+        if (wrk) {
+          healthWorkerName = wrk.name;
+        }
+      } else {
+        healthWorkerName = null;
+      }
+    }
+
+    const updated = await prisma.patient.update({
+      where: { id: existing.id },
+      data: {
+        ...(bloodGroup !== undefined ? { bloodGroup } : {}),
+        ...(allergies !== undefined ? { allergies } : {}),
+        ...(chronicConditions !== undefined ? { chronicConditions } : {}),
+        ...(currentMedications !== undefined ? { currentMedications } : {}),
+        ...(emergencyContact !== undefined ? { emergencyContact } : {}),
+        ...(familyDoctorId !== undefined ? { familyDoctorId: familyDoctorId || null, familyDoctorName } : {}),
+        ...(healthWorkerId !== undefined ? { healthWorkerId: healthWorkerId || null, healthWorkerName } : {}),
+        ...(phone !== undefined ? { phone } : {}),
+        ...(village !== undefined ? { village } : {}),
+        ...(district !== undefined ? { district } : {}),
+        ...(state !== undefined ? { state } : {}),
+        ...(address !== undefined ? { address } : {}),
+      },
+      include: {
+        familyDoctor: { include: { facility: true } },
+        healthWorker: true,
+        consentEntries: { orderBy: { createdAt: 'desc' } },
+        auditEntries: { orderBy: { createdAt: 'desc' } },
+        consultations: { orderBy: { createdAt: 'desc' } },
+        referrals: { orderBy: { createdAt: 'desc' } },
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Patient profile updated successfully',
+      data: {
+        patient: updated,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Get patient audit logs.
+ * GET /api/v1/patients/:id/audit-logs
+ */
+export async function getPatientAuditLogs(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const rawId = req.params.id;
+    const id = Array.isArray(rawId) ? rawId[0] : rawId;
+    const user = (req as any).user;
+
+    const patient = await prisma.patient.findFirst({
+      where: {
+        OR: [{ id }, { healthId: id }, { abhaAddress: id }],
+      },
+    });
+
+    if (!patient) {
+      throw new AppError(`Patient '${id}' not found`, 404);
+    }
+
+    if (user && user.role === 'PATIENT' && patient.userId && user.id !== patient.userId) {
+      throw new AppError('Unauthorized to view this audit log.', 403);
+    }
+
+    const auditLogs = await prisma.auditLog.findMany({
+      where: { patientId: patient.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: { auditLogs },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Get pending access requests for patient.
+ * GET /api/v1/patients/:id/access-requests
+ */
+export async function getPatientAccessRequests(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const rawId = req.params.id;
+    const id = Array.isArray(rawId) ? rawId[0] : rawId;
+    const user = (req as any).user;
+
+    const patient = await prisma.patient.findFirst({
+      where: {
+        OR: [{ id }, { healthId: id }, { abhaAddress: id }],
+      },
+    });
+
+    if (!patient) {
+      throw new AppError(`Patient '${id}' not found`, 404);
+    }
+
+    if (user && user.role === 'PATIENT' && patient.userId && user.id !== patient.userId) {
+      throw new AppError('Unauthorized to view access requests.', 403);
+    }
+
+    const requests = await prisma.consentArtifact.findMany({
+      where: {
+        patientId: patient.id,
+        status: ConsentStatus.TEMPORARY,
+      },
+      include: {
+        facility: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: { requests },
     });
   } catch (err) {
     next(err);

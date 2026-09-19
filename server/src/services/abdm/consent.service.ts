@@ -122,6 +122,41 @@ export class ConsentService {
 
     return updated;
   }
+
+  /**
+   * Approves a pending consent request and writes an entry to the AuditLog.
+   */
+  async approveConsent(idOrCode: string) {
+    const existing = await this.getConsentById(idOrCode);
+    if (!existing) {
+      throw new Error(`Consent artifact ${idOrCode} not found`);
+    }
+
+    const updated = await prisma.consentArtifact.update({
+      where: { id: existing.id },
+      data: {
+        status: ConsentStatus.GRANTED,
+        grantedAt: new Date().toISOString(),
+      },
+    });
+
+    const auditCode = `AUD-${Date.now().toString(36).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`;
+    await prisma.auditLog.create({
+      data: {
+        auditCode,
+        patientId: existing.patientId,
+        accessorName: existing.grantedTo,
+        accessorRole: existing.role,
+        organization: existing.organization,
+        action: 'CONSENT_GRANTED',
+        dataAccessed: existing.dataScope,
+        timestamp: new Date().toISOString(),
+        purpose: existing.purpose || 'Patient approved clinical data access request',
+      },
+    });
+
+    return updated;
+  }
 }
 
 export const consentService = new ConsentService();

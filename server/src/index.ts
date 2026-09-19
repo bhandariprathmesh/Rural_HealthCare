@@ -28,7 +28,7 @@ app.use(
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-emergency-token', 'emergency-token'],
   })
 );
 
@@ -51,6 +51,8 @@ app.use((_req, _res, next) => {
 // Centralized error handling middleware
 app.use(errorHandler);
 
+import { startSosEscalationSweeper } from './services/sosEscalation.service.js';
+
 // Start server
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`=========================================`);
@@ -59,6 +61,9 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🔐 API v1 Base:  http://localhost:${PORT}/api/v1`);
   console.log(`🏥 Mode:         ${process.env.NODE_ENV || 'development'}`);
   console.log(`=========================================`);
+
+  // Start background 10s sweeper for SOS escalation deadlines
+  startSosEscalationSweeper();
 });
 
 // Graceful shutdown

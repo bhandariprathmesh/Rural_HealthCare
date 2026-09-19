@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Role } from './types';
 import { Icon, OfflineIndicator } from './components/shared';
-import { getCurrentUser, getToken, clearToken, dispatchSosAlert } from './api/client';
+import { getCurrentUser, getToken, clearToken, dispatchSosAlert, getActiveSosAlerts, acceptSosAlert, declineSosAlert } from './api/client';
 
 import LoginScreen from './screens/LoginScreen';
 import WorkerDashboard from './screens/WorkerDashboard';
@@ -11,6 +11,7 @@ import HealthAssessment from './screens/HealthAssessment';
 import AIRiskAssessment from './screens/AIRiskAssessment';
 import ReferralSystem from './screens/ReferralSystem';
 import DoctorDashboard from './screens/DoctorDashboard';
+import DoctorSosInbox from './screens/DoctorSosInbox';
 import EmergencyAccess from './screens/EmergencyAccess';
 import EmergencyAccessLog from './screens/EmergencyAccessLog';
 import DoctorPatientView from './screens/DoctorPatientView';
@@ -67,6 +68,10 @@ export interface CurrentUser {
     village?: string;
     district?: string;
     state?: string;
+    familyDoctorId?: string;
+    familyDoctorName?: string;
+    healthWorkerId?: string;
+    healthWorkerName?: string;
   };
 }
 
@@ -138,6 +143,11 @@ const NAV: Record<Role, NavItem[]> = {
       icon: 'share',
     },
     {
+      id: 'doctor-sos-inbox',
+      label: 'SOS Inbox',
+      icon: 'bell',
+    },
+    {
       id: 'emergency-access',
       label: 'Emergency Access',
       icon: 'alert',
@@ -159,11 +169,6 @@ const NAV: Record<Role, NavItem[]> = {
       id: 'patient-profile',
       label: 'My Account',
       icon: 'user',
-    },
-    {
-      id: 'health-assessment',
-      label: 'Self Report',
-      icon: 'clipboard',
     },
     {
       id: 'consent',
@@ -382,6 +387,12 @@ export default function App() {
   const [selectedPatientId, setSelectedPatientId] =
     useState<string | null>(null);
 
+  const [headerSearch, setHeaderSearch] =
+    useState('');
+
+  const [autoOpenEditProfile, setAutoOpenEditProfile] =
+    useState(false);
+
   useEffect(() => {
     const token = getToken();
 
@@ -435,6 +446,49 @@ export default function App() {
     }
   }, [role, screen]);
 
+  // Periodic sync of active SOS alerts across tabs/roles
+  useEffect(() => {
+    if (role === 'login' || isOffline) return;
+
+    const syncAlerts = async () => {
+      try {
+        const active = await getActiveSosAlerts();
+        if (Array.isArray(active)) {
+          setSosAlerts(
+            active.map((a: any) => ({
+              id: a.id,
+              from: a.fromName,
+              role: a.role,
+              patientId: a.patientHealthId,
+              location: a.location,
+              ts:
+                a.ts ||
+                new Date(a.createdAt).toLocaleTimeString('en-IN', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                }),
+              offline: a.isOffline || false,
+              dismissed: a.dismissed || false,
+              status:
+                a.status === 'ACCEPTED'
+                  ? 'acknowledged'
+                  : a.status === 'DECLINED_ALL'
+                  ? 'escalated'
+                  : 'sent',
+              escalationLevel: a.escalationIndex || 0,
+            }))
+          );
+        }
+      } catch {
+        // Silently ignore if network issue
+      }
+    };
+
+    syncAlerts();
+    const timer = setInterval(syncAlerts, 4000);
+    return () => clearInterval(timer);
+  }, [role, isOffline]);
+
   function fireSOS(
     from: string,
     fromRole: string,
@@ -477,6 +531,7 @@ export default function App() {
         role: fromRole,
         patientHealthId: patientId || 'RHC-EMERGENCY',
         location,
+        targetedDoctorId: currentUser?.patientProfile?.familyDoctorId || undefined,
       }).catch((err) => console.warn('SOS broadcast error:', err));
     }
   }
@@ -495,6 +550,7 @@ export default function App() {
   }
 
   function acknowledgeSOS(id: string) {
+    acceptSosAlert(id).catch((err) => console.warn('Accept SOS backend error:', err));
     setSosAlerts((alerts) =>
       alerts.map((alert) =>
         alert.id === id
@@ -508,6 +564,7 @@ export default function App() {
   }
 
   function declineSOS(id: string) {
+    declineSosAlert(id).catch((err) => console.warn('Decline SOS backend error:', err));
     setSosAlerts((alerts) =>
       alerts.map((alert) =>
         alert.id === id
@@ -559,6 +616,14 @@ export default function App() {
     nextScreen: string,
     patientId?: string
   ) {
+    if (nextScreen === 'patient-profile-edit') {
+      setAutoOpenEditProfile(true);
+      setScreen('patient-profile');
+      setSidebarOpen(false);
+      return;
+    }
+
+    setAutoOpenEditProfile(false);
     if (patientId) {
       setSelectedPatientId(
         patientId
@@ -854,6 +919,14 @@ export default function App() {
               />
 
               <input
+                value={headerSearch}
+                onChange={(e) => setHeaderSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && headerSearch.trim()) {
+                    setSelectedPatientId(null);
+                    setScreen('patient-profile');
+                  }
+                }}
                 placeholder="Search patient..."
                 className="w-full pl-8 pr-3 py-2 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-brand-400 bg-gray-50"
               />
@@ -967,9 +1040,7 @@ export default function App() {
               }
               activeSosAlert={
                 sosAlerts.find(
-                  (alert) =>
-                    alert.role ===
-                    'ASHA Worker'
+                  (alert) => !alert.dismissed
                 ) ?? null
               }
             />
@@ -993,8 +1064,16 @@ export default function App() {
               navigate={
                 navigate
               }
+              currentUser={
+                currentUser
+              }
+              autoOpenEdit={
+                autoOpenEditProfile
+              }
               patientId={
-                selectedPatientId
+                role === 'patient'
+                  ? (currentUser?.patientProfile?.healthId || currentUser?.patientProfile?.id)
+                  : selectedPatientId
               }
             />
           )}
@@ -1154,6 +1233,13 @@ export default function App() {
             />
           )}
 
+          {(screen === 'doctor-sos-inbox' || screen === 'sos-inbox') && (
+            <DoctorSosInbox
+              navigate={navigate}
+              isOffline={isOffline}
+            />
+          )}
+
           {screen ===
             'emergency-access' && (
             <EmergencyAccess
@@ -1168,6 +1254,9 @@ export default function App() {
             <EmergencyAccessLog
               navigate={
                 navigate
+              }
+              isOffline={
+                isOffline
               }
             />
           )}

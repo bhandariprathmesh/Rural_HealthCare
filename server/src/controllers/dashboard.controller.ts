@@ -388,8 +388,8 @@ export async function getPatientDashboard(req: Request, res: Response, next: Nex
       },
     });
 
-    // Synthetic structured lab reports based on clinical record
-    const labReports = [
+    // Structured lab reports only for demo patients; clean empty array for new patients
+    const labReports = patient.isDemo ? [
       {
         date: patient.lastConsultation || '29 Aug 2026',
         name: 'Complete Blood Count (CBC)',
@@ -404,14 +404,16 @@ export async function getPatientDashboard(req: Request, res: Response, next: Nex
         result: 'TSH: 3.2 mIU/L · T3: Normal · T4: Normal',
         status: 'normal',
       },
-      {
-        date: '14 May 2026',
-        name: 'Thyroid Function Test (TFT)',
-        by: 'CHC Bikaner Lab',
-        result: 'TSH: 8.2 mIU/L · T3: Low · T4: Low',
-        status: 'abnormal',
-      },
-    ];
+    ] : [];
+
+    const formattedMedicines = medicines.length > 0
+      ? medicines
+      : prescribedNames.map(name => ({
+          name,
+          dosageForm: 'Prescribed Medicine',
+          strength: '',
+          dosage: 'As advised by doctor',
+        }));
 
     res.status(200).json({
       success: true,
@@ -420,11 +422,7 @@ export async function getPatientDashboard(req: Request, res: Response, next: Nex
         consultations: patient.consultations,
         referrals: patient.referrals,
         consents: patient.consentEntries,
-        medicines: medicines.length > 0 ? medicines : [
-          { name: 'Thyronorm 25 mcg', dosageForm: 'Tablet', strength: '25 mcg', dosage: 'Once daily – morning (empty stomach)' },
-          { name: 'Ferrous Sulphate 200 mg', dosageForm: 'Tablet', strength: '200 mg', dosage: 'Three times daily – after meals' },
-          { name: 'Folic Acid 5 mg', dosageForm: 'Tablet', strength: '5 mg', dosage: 'Once daily – after meals' },
-        ],
+        medicines: formattedMedicines,
         labReports,
       },
     });

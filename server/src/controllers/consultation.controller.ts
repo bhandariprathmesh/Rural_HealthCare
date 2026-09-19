@@ -2,10 +2,12 @@ import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { AppError } from '../middleware/error.js';
-import { RiskLevel } from '@prisma/client';
+import { RiskLevel, ReferralStatus } from '@prisma/client';
+import { checkPatientAccess } from '../services/accessControl.service.js';
 
 const createConsultationSchema = z.object({
   patientId: z.string().min(1, 'Patient ID or Health ID is required'),
+  referralId: z.string().optional(),
   workerId: z.string().optional(),
   workerName: z.string().default('Meena Kumari (ASHA)'),
   doctorId: z.string().optional(),
@@ -134,6 +136,24 @@ export async function createConsultation(req: Request, res: Response, next: Next
       throw new AppError(`Patient '${input.patientId}' not found. Cannot create consultation.`, 404);
     }
 
+    // Consent-First Authorization Check
+    const user = (req as any).user;
+    const emergencyToken = (req.headers['x-emergency-token'] || req.headers['emergency-token']) as string | undefined;
+
+    const access = await checkPatientAccess({
+      user,
+      patientIdOrHealthId: input.patientId,
+      requiredScope: 'Consultations',
+      emergencyToken,
+    });
+
+    if (!access.hasAccess) {
+      throw new AppError(
+        access.reason || 'Patient consent required to record clinical consultations, symptoms, and vitals.',
+        403
+      );
+    }
+
     const consultationCode = `CON-2026-${Math.floor(100 + Math.random() * 900)}`;
     const normalizedRisk = input.riskLevel.toUpperCase() as RiskLevel;
     const now = new Date();
@@ -173,6 +193,20 @@ export async function createConsultation(req: Request, res: Response, next: Next
         },
       });
 
+      // Synchronize active referral to COMPLETED if referralStatus is completed or referralId provided
+      if (input.referralStatus === 'completed' || input.referralId) {
+        await tx.referral.updateMany({
+          where: {
+            patientId: patient.id,
+            status: { in: [ReferralStatus.PENDING, ReferralStatus.ACCEPTED, ReferralStatus.IN_CONSULTATION] },
+            ...(input.referralId ? { OR: [{ id: input.referralId }, { referralCode: input.referralId }] } : {}),
+          },
+          data: {
+            status: ReferralStatus.COMPLETED,
+          },
+        });
+      }
+
       return con;
     });
 
@@ -187,6 +221,7 @@ export async function createConsultation(req: Request, res: Response, next: Next
 }
 
 const updateConsultationSchema = z.object({
+  referralId: z.string().optional(),
   diagnosis: z.string().optional(),
   treatment: z.string().optional(),
   prescription: z.array(z.string()).optional(),
@@ -246,6 +281,20 @@ export async function updateConsultation(req: Request, res: Response, next: Next
         await tx.patient.update({
           where: { id: existing.patientId },
           data: { riskLevel: updateData.riskLevel },
+        });
+      }
+
+      // Synchronize referral status to COMPLETED if referralStatus is completed or referralId provided
+      if (input.referralStatus === 'completed' || input.referralId) {
+        await tx.referral.updateMany({
+          where: {
+            patientId: existing.patientId,
+            status: { in: [ReferralStatus.PENDING, ReferralStatus.ACCEPTED, ReferralStatus.IN_CONSULTATION] },
+            ...(input.referralId ? { OR: [{ id: input.referralId }, { referralCode: input.referralId }] } : {}),
+          },
+          data: {
+            status: ReferralStatus.COMPLETED,
+          },
         });
       }
 

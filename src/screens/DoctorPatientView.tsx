@@ -19,6 +19,7 @@ import {
   getMedicines,
   updateReferralStatus,
   getCurrentUser,
+  requestPatientAccess,
 } from '../api/client';
 
 interface Props {
@@ -51,6 +52,17 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
+  // Access Control State
+  const [hasAccess, setHasAccess] = useState(true);
+  const [pendingRequest, setPendingRequest] = useState<any>(null);
+  const [activeConsentInfo, setActiveConsentInfo] = useState<any>(null);
+  const [requestModalOpen, setRequestModalOpen] = useState(false);
+  const [requestDuration, setRequestDuration] = useState('1 month');
+  const [requestReason, setRequestReason] = useState('Outpatient consultation and clinical evaluation');
+  const [requestScopes, setRequestScopes] = useState<string[]>(['Basic Information', 'Consultation History']);
+  const [requestSubmitting, setRequestSubmitting] = useState(false);
+  const [requestMsg, setRequestMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   useEffect(() => {
     getCurrentUser()
       .then(setDbUser)
@@ -77,6 +89,11 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
           const res = await getPatientByHealthId(targetId);
           if (mounted && res?.patient) {
             const p = res.patient;
+            const accessAllowed = res.hasAccess !== false && p.hasAccess !== false;
+            setHasAccess(accessAllowed);
+            setPendingRequest(res.pendingRequest || p.pendingRequest || null);
+            setActiveConsentInfo(res.activeConsent || p.activeConsent || null);
+
             setPatient({
               id: p.healthId || p.id,
               rawId: p.id,
@@ -145,6 +162,37 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
     setPrescriptionList(prev => prev.filter(m => m !== medName));
   }
 
+  async function handleSendAccessRequest() {
+    const rawTargetId = patient?.rawId || patient?.id;
+    if (!rawTargetId) return;
+    setRequestSubmitting(true);
+    setRequestMsg(null);
+    try {
+      const res = await requestPatientAccess(rawTargetId, {
+        duration: requestDuration,
+        reason: requestReason.trim() || 'Outpatient consultation and clinical evaluation',
+        dataScope: requestScopes,
+      });
+      setRequestMsg({
+        type: 'success',
+        text: 'Access request submitted successfully! Waiting for patient authorization.',
+      });
+      if (res?.request) {
+        setPendingRequest(res.request);
+      }
+      setTimeout(() => {
+        setRequestModalOpen(false);
+      }, 1500);
+    } catch (err: any) {
+      setRequestMsg({
+        type: 'error',
+        text: err?.message || 'Failed to submit access request.',
+      });
+    } finally {
+      setRequestSubmitting(false);
+    }
+  }
+
   async function handleSaveClinicalNote() {
     if (!diagnosis.trim() && !treatment.trim() && prescriptionList.length === 0) return;
     setSaving(true);
@@ -157,6 +205,7 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
       if (latestConsultation && latestConsultation.id) {
         // Update existing consultation with doctor's clinical findings
         const res = await updateConsultation(latestConsultation.id, {
+          referralId: activeReferral?.id,
           diagnosis: diagnosis.trim() || undefined,
           treatment: treatment.trim() || undefined,
           prescription: prescriptionList.length > 0 ? prescriptionList : undefined,
@@ -175,6 +224,7 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
         // Create a new consultation recorded by this doctor
         const res = await createConsultation({
           patientId: patient?.rawId || patient?.id,
+          referralId: activeReferral?.id,
           doctorId,
           doctorName,
           diagnosis: diagnosis.trim(),
@@ -188,6 +238,11 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
         if (res?.consultation) {
           setConsultations(prev => [res.consultation, ...prev]);
         }
+      }
+
+      if (activeReferral?.id) {
+        await updateReferralStatus(activeReferral.id, 'COMPLETED', 'Completed consultation by doctor').catch(() => {});
+        setActiveReferral((prev: any) => prev ? { ...prev, status: 'completed' } : null);
       }
 
       setSaveSuccess('Clinical diagnosis and prescription saved successfully in PostgreSQL.');
@@ -241,6 +296,246 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
 
   const doctorDisplayName = dbUser?.fullName || dbUser?.doctorProfile?.name || 'Dr. Ankit Sharma';
 
+  // ── ACCESS RESTRICTED VIEW (Flow B: Direct Patient Arrival without Referral / Consent) ──
+  if (!hasAccess) {
+    return (
+      <div className="p-6 max-w-4xl mx-auto space-y-5">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('doctor-dashboard')}
+            className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors"
+          >
+            <Icon name="chevron_right" size={18} className="rotate-180 text-gray-600" />
+          </button>
+          <div>
+            <h1 className="font-display text-xl font-bold text-gray-900">Patient Identification</h1>
+            <p className="text-xs text-gray-500">Direct Visit · ABDM Consent Protocol · {doctorDisplayName}</p>
+          </div>
+          <div className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-xl text-xs font-semibold text-amber-800">
+            <Icon name="lock" size={12} className="text-amber-600" />
+            ACCESS RESTRICTED
+          </div>
+        </div>
+
+        {/* Minimal Demographic ID Card (Public identifiers only) */}
+        <Card className="overflow-hidden border-amber-200">
+          <div className="bg-gradient-to-r from-amber-600 to-amber-700 px-6 py-5 text-white">
+            <div className="flex items-start gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center text-2xl font-display font-bold shrink-0">
+                {String(patient.name || 'P').split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-3 flex-wrap mb-1">
+                  <h2 className="font-display text-xl font-bold">{patient.name}</h2>
+                  {patient.nameHi && <span className="text-amber-100 text-sm">· {patient.nameHi}</span>}
+                </div>
+                <div className="text-amber-100 text-sm">
+                  {patient.age} yrs · {patient.gender} · {patient.village}, {patient.district}
+                </div>
+                <div className="font-mono text-xs text-amber-200 mt-1">Health ID: {patient.id}</div>
+              </div>
+            </div>
+          </div>
+          <div className="px-6 py-3 bg-amber-50/70 border-t border-amber-100 flex items-center gap-2 text-xs text-amber-800 font-medium">
+            <Icon name="shield" size={13} className="text-amber-600 shrink-0" />
+            Direct patient arrival without active referral. Clinical records protected under ABDM consent framework.
+          </div>
+        </Card>
+
+        {/* Access Locked Card & Request Action */}
+        <Card className="p-6 border-2 border-dashed border-amber-300 bg-gradient-to-b from-amber-50/40 to-white text-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto shadow-sm">
+            <Icon name="lock" size={28} />
+          </div>
+
+          <div className="max-w-md mx-auto space-y-1">
+            <h3 className="font-display font-bold text-gray-900 text-base">Protected Clinical Record</h3>
+            <p className="text-xs text-gray-600 leading-relaxed">
+              Medical history, past consultations, allergies, current medications, and diagnostic notes are locked. The patient must grant explicit digital consent before these records can be accessed.
+            </p>
+          </div>
+
+          {pendingRequest ? (
+            <div className="max-w-md mx-auto p-4 bg-amber-50 border border-amber-200 rounded-2xl text-left space-y-2">
+              <div className="flex items-center gap-2 text-xs font-bold text-amber-800 uppercase tracking-wider">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                Access Request Pending Patient Approval
+              </div>
+              <div className="text-xs text-gray-700 space-y-1 font-mono">
+                <div><span className="text-gray-400 font-sans">Request Code:</span> {pendingRequest.consentCode || pendingRequest.id}</div>
+                <div><span className="text-gray-400 font-sans">Purpose:</span> {pendingRequest.purpose || 'Clinical consultation'}</div>
+                <div><span className="text-gray-400 font-sans">Requested Scope:</span> {Array.isArray(pendingRequest.dataScope) ? pendingRequest.dataScope.join(', ') : 'Basic Info & Consultation History'}</div>
+                {pendingRequest.createdAt && (
+                  <div><span className="text-gray-400 font-sans">Submitted:</span> {new Date(pendingRequest.createdAt).toLocaleString('en-IN')}</div>
+                )}
+              </div>
+              <p className="text-[11px] text-amber-700 pt-1 border-t border-amber-100">
+                Please ask the patient to approve the request on their RuralCare app, or enter the OTP received on their phone.
+              </p>
+            </div>
+          ) : (
+            <div className="pt-2">
+              <button
+                onClick={() => setRequestModalOpen(true)}
+                className="px-6 py-3 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-brand-200 hover:shadow-lg flex items-center justify-center gap-2 mx-auto active:scale-95"
+              >
+                <Icon name="key" size={16} />
+                Request Patient Access
+              </button>
+              <p className="text-[11px] text-gray-400 mt-2">
+                Sends an ABDM consent request specifying duration, purpose, and required scopes.
+              </p>
+            </div>
+          )}
+
+          <div className="pt-4 border-t border-gray-100 flex items-center justify-center gap-4 text-xs text-gray-400">
+            <button
+              onClick={() => navigate('emergency-access')}
+              className="text-red-600 hover:text-red-700 font-semibold flex items-center gap-1 hover:underline"
+            >
+              <Icon name="alert" size={12} />
+              Life-threatening Emergency? Use Break-Glass Access
+            </button>
+          </div>
+        </Card>
+
+        {/* REQUEST ACCESS MODAL */}
+        {requestModalOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <Card className="max-w-lg w-full p-6 space-y-4 shadow-2xl border-2 border-brand-200">
+              <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-brand-100 text-brand-700 flex items-center justify-center">
+                    <Icon name="key" size={16} />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-gray-900 text-base">Request Patient Access</h3>
+                    <p className="text-[11px] text-gray-400">ABDM Time-Limited Consent Artifact</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setRequestModalOpen(false)}
+                  className="w-7 h-7 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {requestMsg && (
+                <div
+                  className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                    requestMsg.type === 'success'
+                      ? 'bg-green-50 text-green-800 border border-green-200'
+                      : 'bg-red-50 text-red-800 border border-red-200'
+                  }`}
+                >
+                  <Icon name={requestMsg.type === 'success' ? 'check' : 'alert'} size={14} />
+                  <span>{requestMsg.text}</span>
+                </div>
+              )}
+
+              {/* Patient info reminder */}
+              <div className="p-3 bg-gray-50 rounded-xl text-xs space-y-1">
+                <div className="text-gray-500 font-medium">Requesting Access For:</div>
+                <div className="font-bold text-gray-900">{patient.name} · {patient.age}y/{patient.gender}</div>
+                <div className="font-mono text-gray-500 text-[11px]">{patient.id}</div>
+              </div>
+
+              {/* Duration selector */}
+              <div>
+                <label className="text-xs font-semibold text-gray-700 block mb-1.5">Access Duration *</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {['1 day', '1 week', '1 month', '3 months'].map(d => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setRequestDuration(d)}
+                      className={`py-2 px-2 text-xs font-semibold rounded-xl border transition-all ${
+                        requestDuration === d
+                          ? 'border-brand-600 bg-brand-50 text-brand-700'
+                          : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      {d}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Reason input */}
+              <div>
+                <label className="text-xs font-semibold text-gray-700 block mb-1.5">Reason for Access *</label>
+                <input
+                  value={requestReason}
+                  onChange={e => setRequestReason(e.target.value)}
+                  placeholder="e.g. Outpatient consultation for acute symptoms"
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-brand-400 bg-white"
+                />
+              </div>
+
+              {/* Scope selection */}
+              <div>
+                <label className="text-xs font-semibold text-gray-700 block mb-1.5">Information Scope *</label>
+                <div className="space-y-2">
+                  {[
+                    { id: 'Basic Information', desc: 'Demographics, emergency contact, blood group' },
+                    { id: 'Consultation History', desc: 'Past diagnoses, prescriptions, clinical notes' },
+                  ].map(s => {
+                    const isChecked = requestScopes.includes(s.id);
+                    return (
+                      <label
+                        key={s.id}
+                        className={`flex items-start gap-2.5 p-2.5 rounded-xl border cursor-pointer transition-all ${
+                          isChecked ? 'border-brand-300 bg-brand-50/50' : 'border-gray-100 hover:bg-gray-50'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={e => {
+                            if (e.target.checked) {
+                              setRequestScopes(prev => [...prev, s.id]);
+                            } else {
+                              setRequestScopes(prev => prev.filter(x => x !== s.id));
+                            }
+                          }}
+                          className="mt-0.5 accent-brand-600"
+                        />
+                        <div>
+                          <div className="text-xs font-bold text-gray-800">{s.id}</div>
+                          <div className="text-[11px] text-gray-500">{s.desc}</div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="pt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRequestModalOpen(false)}
+                  className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-semibold transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSendAccessRequest}
+                  disabled={requestSubmitting || !requestReason.trim() || requestScopes.length === 0}
+                  className="flex-1 py-2.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <Icon name="check" size={14} />
+                  {requestSubmitting ? 'Sending Request…' : 'Submit Access Request'}
+                </button>
+              </div>
+            </Card>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-5">
       <div className="flex items-center gap-3">
@@ -251,9 +546,9 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
           <h1 className="font-display text-xl font-bold text-gray-900">Patient Record</h1>
           <p className="text-xs text-gray-500">Authenticated clinical view · {doctorDisplayName}</p>
         </div>
-        <div className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-100 rounded-xl text-xs text-green-700">
+        <div className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-100 rounded-xl text-xs text-green-700 font-semibold">
           <Icon name="shield" size={12} />
-          Authorized Access
+          {activeReferral ? 'Active ASHA Referral' : activeConsentInfo ? 'Patient Consent Granted' : 'Authorized Access'}
         </div>
       </div>
 
@@ -299,6 +594,52 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
           <span>Emergency: {patient.emergencyContact?.name} ({patient.emergencyContact?.relation})</span>
         </div>
       </Card>
+
+      {/* Active ASHA Referral Banner (Flow A) */}
+      {activeReferral && (
+        <Card className="p-4 border-amber-200 bg-amber-50/50 space-y-3">
+          <div className="flex items-start justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
+                <Icon name="share" size={16} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-display font-bold text-sm text-gray-900">ASHA Clinical Referral</span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                    activeReferral.priority === 'emergency' ? 'bg-red-100 text-red-700' :
+                    activeReferral.priority === 'urgent' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-700'
+                  }`}>
+                    {activeReferral.priority || 'routine'}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                    activeReferral.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'
+                  }`}>
+                    {activeReferral.status || 'pending'}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Referred by <strong>{activeReferral.fromWorker || 'ASHA Worker'}</strong> · {activeReferral.toPHC || 'Primary Health Centre'} · {activeReferral.date || 'Recent'}
+                </p>
+              </div>
+            </div>
+            {activeReferral.status !== 'completed' && (
+              <button
+                onClick={handleCompleteReferral}
+                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg text-xs transition-colors flex items-center gap-1 shrink-0"
+              >
+                <Icon name="check" size={12} />
+                Mark Completed
+              </button>
+            )}
+          </div>
+          <div className="text-xs text-gray-700 bg-white/80 border border-amber-100 p-2.5 rounded-xl">
+            <div className="font-semibold text-gray-900 mb-0.5">Reason: {activeReferral.reason}</div>
+            {activeReferral.notes && <div className="text-gray-600 italic">ASHA Notes: "{activeReferral.notes}"</div>}
+            {activeReferral.aiSummary && <div className="text-gray-600 mt-1"><strong className="text-brand-700">AI Triage:</strong> {activeReferral.aiSummary}</div>}
+          </div>
+        </Card>
+      )}
 
       <Tabs tabs={TABS} active={activeTab} onChange={setActiveTab} />
 

@@ -2,100 +2,83 @@ import { useState, useEffect } from 'react';
 import { Icon, Card, SectionHeader } from '../components/shared';
 import { getEmergencyLogs } from '../api/client';
 
-interface Props { navigate: (s: string) => void; }
+interface Props { navigate: (s: string) => void; isOffline?: boolean; }
 
-const LOG_ENTRIES = [
-  {
-    id: 'EAL-2026-001',
-    patient: 'Priya Devi',
-    patientId: 'RHC-2026-8F4K92',
-    doctor: 'Dr. Ankit Sharma',
-    facility: 'PHC Lunkaransar',
-    reason: 'Patient unconscious',
-    note: 'Patient found unresponsive, suspected cardiac event, referred by ASHA Sunita Yadav.',
-    started: '31 Aug 2026, 14:32',
-    ended: '31 Aug 2026, 14:47',
-    duration: '15 min',
-    records: 'Emergency Medical Summary',
-    addlRequested: false,
-    status: 'Completed',
-  },
-  {
-    id: 'EAL-2026-002',
-    patient: 'Unknown Patient',
-    patientId: 'TEMP-ER-2026-0046',
-    doctor: 'Dr. Priya Mehta',
-    facility: 'PHC Bikaner',
-    reason: 'Life-threatening condition',
-    note: 'RTA victim, unconscious, no ID available. Temp record created.',
-    started: '28 Aug 2026, 09:15',
-    ended: '28 Aug 2026, 09:30',
-    duration: '15 min',
-    records: 'Emergency Medical Summary, Vitals',
-    addlRequested: true,
-    status: 'Completed',
-  },
-  {
-    id: 'EAL-2026-003',
-    patient: 'Mohan Lal',
-    patientId: 'RHC-2026-2K8Q15',
-    doctor: 'Dr. Ankit Sharma',
-    facility: 'PHC Lunkaransar',
-    reason: 'Patient unable to provide consent',
-    note: 'Acute COPD exacerbation, semi-conscious.',
-    started: '31 Aug 2026, 08:35',
-    ended: '31 Aug 2026, 08:50',
-    duration: '15 min',
-    records: 'Emergency Medical Summary, Medications, Allergies',
-    addlRequested: true,
-    status: 'Completed',
-  },
-];
-
-export default function EmergencyAccessLog({ navigate }: Props) {
-  const [logs, setLogs] = useState<any[]>(LOG_ENTRIES);
+export default function EmergencyAccessLog({ navigate, isOffline = false }: Props) {
+  const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
+
+  const loadLogs = async () => {
+    try {
+      const fetched = await getEmergencyLogs();
+      const list = Array.isArray(fetched) ? fetched : [];
+      const mapped = list.map((f: any) => ({
+        id: f.logCode || f.id,
+        sosCode: f.sosAlert?.sosCode || f.sosCode || null,
+        patient: f.patientName || 'Unknown Patient',
+        patientId: f.patientHealthId || 'N/A',
+        doctor: f.doctorName || 'Attending Physician',
+        facility: f.facilityName || 'Emergency Center',
+        reason: f.reason || 'Emergency Care',
+        note: f.note || 'No clinical note provided',
+        started: f.started || (f.createdAt ? new Date(f.createdAt).toLocaleString('en-IN') : 'Recent'),
+        ended: f.ended || '15 min session',
+        duration: f.duration || '15 min',
+        records: f.records || 'Emergency Medical Summary',
+        addlRequested: f.addlRequested || false,
+        status: f.status || 'Completed',
+      }));
+      setLogs(mapped);
+      setFetchError(false);
+    } catch (e) {
+      console.error('Failed to load emergency logs:', e);
+      setFetchError(true);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    async function loadLogs() {
-      try {
-        const fetched = await getEmergencyLogs();
-        if (fetched && fetched.length > 0) {
-          const mapped = fetched.map((f: any) => ({
-            id: f.logCode || f.id,
-            patient: f.patientName || 'Unknown Patient',
-            patientId: f.patientHealthId || 'N/A',
-            doctor: f.doctorName || 'Attending Physician',
-            facility: f.facilityName || 'Emergency Center',
-            reason: f.reason || 'Emergency Care',
-            note: f.note || 'No clinical note provided',
-            started: f.started || new Date(f.createdAt).toLocaleString('en-IN'),
-            ended: f.ended || '15 min session',
-            duration: f.duration || '15 min',
-            records: f.records || 'Emergency Medical Summary',
-            addlRequested: f.addlRequested || false,
-            status: f.status || 'Active',
-          }));
-          setLogs(mapped);
-        }
-      } catch (e) {
-        console.error('Failed to load emergency logs, showing offline records:', e);
-      } finally {
-        setLoading(false);
-      }
-    }
     loadLogs();
-  }, []);
+
+    const timer = setInterval(() => {
+      if (!isOffline) {
+        loadLogs();
+      }
+    }, 5000);
+
+    return () => clearInterval(timer);
+  }, [isOffline]);
 
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-5">
-      <div className="flex items-center gap-3">
-        <button onClick={() => navigate('doctor-dashboard')} className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center">
-          <Icon name="chevron_right" size={18} className="rotate-180 text-gray-600" />
-        </button>
-        <div>
-          <h1 className="font-display text-xl font-bold text-gray-900">Emergency Access Log</h1>
-          <p className="text-xs text-gray-500">Audit trail of all break-glass emergency access events</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button onClick={() => navigate('doctor-dashboard')} className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center">
+            <Icon name="chevron_right" size={18} className="rotate-180 text-gray-600" />
+          </button>
+          <div>
+            <h1 className="font-display text-xl font-bold text-gray-900">Emergency Access Log</h1>
+            <p className="text-xs text-gray-500">Audit trail of all break-glass emergency access events</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {isOffline && (
+            <span className="px-2 py-1 rounded-lg text-xs font-semibold bg-amber-100 text-amber-800 flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-amber-500" />
+              Offline
+            </span>
+          )}
+          {fetchError && (
+            <button
+              onClick={() => { setLoading(true); loadLogs(); }}
+              className="px-2.5 py-1 text-xs font-medium bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700 transition-colors"
+            >
+              Retry
+            </button>
+          )}
         </div>
       </div>
 
@@ -106,7 +89,27 @@ export default function EmergencyAccessLog({ navigate }: Props) {
 
       <div className="space-y-4">
         {loading && (
-          <div className="text-center py-6 text-xs text-gray-500">Loading audit trail...</div>
+          <div className="text-center py-6 text-xs text-gray-500">Loading audit trail from PostgreSQL...</div>
+        )}
+        {!loading && logs.length === 0 && (
+          <Card className="p-10 text-center space-y-3">
+            <div className="w-12 h-12 rounded-2xl bg-gray-100 text-gray-400 flex items-center justify-center mx-auto">
+              <Icon name="shield" size={24} />
+            </div>
+            <div className="space-y-1">
+              <h3 className="font-semibold text-gray-800 text-sm">No Emergency Break-Glass Sessions</h3>
+              <p className="text-xs text-gray-500 max-w-sm mx-auto">
+                No break-glass emergency medical access has been executed yet. All emergency access sessions performed by doctors under the ABDM Break-Glass Protocol will be permanently logged here in PostgreSQL.
+              </p>
+            </div>
+            <button
+              onClick={() => navigate('emergency-access')}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-colors inline-flex items-center gap-1.5"
+            >
+              <Icon name="alert" size={13} />
+              Open Emergency Access Protocol
+            </button>
+          </Card>
         )}
         {logs.map(entry => (
           <Card key={entry.id} className="overflow-hidden">
@@ -116,6 +119,11 @@ export default function EmergencyAccessLog({ navigate }: Props) {
                 <div className="w-2 h-2 rounded-full bg-red-500" />
                 <span className="text-xs font-bold text-red-700 uppercase tracking-wide">Emergency Break-Glass</span>
                 <span className="font-mono text-[10px] text-gray-400">{entry.id}</span>
+                {entry.sosCode && (
+                  <span className="px-2 py-0.5 bg-red-200 text-red-800 font-mono text-[10px] font-bold rounded">
+                    SOS: {entry.sosCode}
+                  </span>
+                )}
               </div>
               <span className="text-xs font-medium bg-green-100 text-green-700 px-2 py-0.5 rounded">{entry.status}</span>
             </div>
@@ -147,7 +155,7 @@ export default function EmergencyAccessLog({ navigate }: Props) {
               <div className="sm:col-span-2">
                 <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">Records Accessed</div>
                 <div className="flex flex-wrap gap-1.5">
-                  {entry.records.split(', ').map(r => (
+                  {entry.records.split(', ').map((r: string) => (
                     <span key={r} className="px-2 py-0.5 bg-gray-100 text-gray-700 rounded text-xs">{r}</span>
                   ))}
                   {entry.addlRequested && (

@@ -3,10 +3,19 @@ import { z } from 'zod';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma.js';
 import { AppError } from '../middleware/error.js';
+import {
+  initializeSosAlert,
+  acceptSosAlert,
+  declineSosAlert,
+  cancelSosAlert,
+  getSosAlertStatus,
+  getDoctorSosInbox,
+} from '../services/sosEscalation.service.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'ruralcare_jwt_super_secret_key_change_in_production_2026';
 
 const authorizeEmergencySchema = z.object({
+  sosAlertId: z.string().optional(),
   patientId: z.string().optional(),
   patientHealthId: z.string().min(1, 'Patient Health ID or Temp ID is required'),
   patientName: z.string().min(1, 'Patient Name is required'),
@@ -25,16 +34,16 @@ const createSosSchema = z.object({
   senderId: z.string().optional(),
   patientId: z.string().optional(),
   patientHealthId: z.string().min(1, 'Patient ID is required'),
+  facilityId: z.string().optional(),
   location: z.string().min(1, 'Location is required'),
   targetedDoctorId: z.string().optional(),
+  vitalsSnapshot: z.any().optional(),
 });
 
 /**
  * T3 Tier Emergency Access Authorization (Break-Glass Protocol)
  * Issues a 15-minute time-limited emergency JWT token and records immutable audit log.
- *
- * NOTE: T2 (SMS parallel race), T1 (2G encrypted SMS), T0 (Bluetooth relay),
- * and LoRa radio relay are reserved for Phase 2 — Capacitor native implementation.
+ * Optionally links to an active SOS alert.
  */
 export async function authorizeEmergencyAccess(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -47,6 +56,7 @@ export async function authorizeEmergencyAccess(req: Request, res: Response, next
       {
         accessType: 'BREAK_GLASS_EMERGENCY',
         logCode,
+        sosAlertId: data.sosAlertId || null,
         patientHealthId: data.patientHealthId,
         doctorName: data.doctorName,
         facilityName: data.facilityName,
@@ -56,7 +66,6 @@ export async function authorizeEmergencyAccess(req: Request, res: Response, next
       { expiresIn: '15m' }
     );
 
-    // Persist immutable audit log entry in PostgreSQL
     const started = new Date().toLocaleString('en-IN', {
       day: 'numeric',
       month: 'short',
@@ -65,15 +74,23 @@ export async function authorizeEmergencyAccess(req: Request, res: Response, next
       minute: '2-digit',
     });
 
+    // Validate facilityId to avoid FK constraint violation
+    let resolvedFacilityId: string | null = null;
+    if (data.facilityId) {
+      const facilityExists = await prisma.facility.findUnique({ where: { id: data.facilityId } });
+      resolvedFacilityId = facilityExists ? data.facilityId : null;
+    }
+
     const logEntry = await prisma.emergencyAccessLog.create({
       data: {
         logCode,
+        sosAlertId: data.sosAlertId || null,
         patientId: data.patientId || null,
         patientHealthId: data.patientHealthId,
         patientName: data.patientName,
         doctorId: data.doctorId || null,
         doctorName: data.doctorName,
-        facilityId: data.facilityId || null,
+        facilityId: resolvedFacilityId,
         facilityName: data.facilityName,
         reason: data.reason,
         note: data.note,
@@ -81,6 +98,9 @@ export async function authorizeEmergencyAccess(req: Request, res: Response, next
         duration: '15 min',
         records: data.records,
         status: 'Active',
+      },
+      include: {
+        sosAlert: true,
       },
     });
 
@@ -99,12 +119,24 @@ export async function authorizeEmergencyAccess(req: Request, res: Response, next
 }
 
 /**
- * Retrieve immutable Emergency Access Logs
+ * Retrieve immutable Emergency Access Logs (with optional linked SOS alert)
  */
 export async function getEmergencyLogs(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const logs = await prisma.emergencyAccessLog.findMany({
       orderBy: { createdAt: 'desc' },
+      include: {
+        sosAlert: {
+          select: {
+            id: true,
+            sosCode: true,
+            status: true,
+            fromName: true,
+            role: true,
+            location: true,
+          },
+        },
+      },
       take: 50,
     });
 
@@ -118,37 +150,38 @@ export async function getEmergencyLogs(_req: Request, res: Response, next: NextF
 }
 
 /**
- * T3 Tier SOS Alert Dispatch
- * Creates an urgent SOS notification record in PostgreSQL.
+ * T3 Tier SOS Alert Dispatch (ASHA / Worker / Patient triggers)
+ * Initializes escalation roster, sets 90s deadline for Roster[0], logs NOTIFIED.
  *
- * TODO (Phase 2 — Capacitor): Add native SMS dual-dispatch fallback (T2) and
- * offline Bluetooth peer relay (T0) when native Android APIs become available.
+ * TODO (Phase 2 — Capacitor): Add native SMS dual-dispatch fallback (T2),
+ * encrypted SMS with HMAC (T1), and offline BLE mesh peer relay (T0).
  */
 export async function dispatchSosAlert(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const data = createSosSchema.parse(req.body);
-    const sosCode = `SOS-2026-${Date.now().toString().slice(-6)}`;
 
-    const alert = await prisma.sosAlert.create({
-      data: {
-        sosCode,
-        fromName: data.fromName,
-        role: data.role,
-        senderId: data.senderId || null,
-        patientId: data.patientId || null,
-        patientHealthId: data.patientHealthId,
-        location: data.location,
-        ts: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-        status: 'SENT',
-        targetedDoctorId: data.targetedDoctorId || null,
-        timeoutSeconds: 90,
-      },
+    const result = await initializeSosAlert({
+      fromName: data.fromName,
+      role: data.role,
+      senderId: data.senderId || (req as any).user?.id,
+      patientId: data.patientId,
+      patientHealthId: data.patientHealthId,
+      facilityId: data.facilityId,
+      location: data.location,
+      targetedDoctorId: data.targetedDoctorId,
+      vitalsSnapshot: data.vitalsSnapshot,
     });
 
     res.status(201).json({
       success: true,
-      message: 'Emergency SOS alert dispatched successfully (T3 Tier)',
-      data: alert,
+      message: `Emergency SOS alert dispatched. Assigned to ${result.currentResponder.name}.`,
+      data: {
+        ...result.alert,
+        currentResponderName: result.currentResponder.name,
+        hopNumber: 1,
+        totalHops: result.rosterLength,
+        secondsRemaining: result.secondsRemaining,
+      },
     });
   } catch (err) {
     next(err);
@@ -156,14 +189,117 @@ export async function dispatchSosAlert(req: Request, res: Response, next: NextFu
 }
 
 /**
- * Retrieve active SOS alerts for on-duty medical officers
+ * Doctor SOS Inbox
+ * Returns alerts assigned to the current doctor or control room with live seconds left.
+ */
+export async function getDoctorSosInboxController(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = (req as any).user;
+    const isControlRoom = user?.role === 'ADMIN';
+
+    // Doctor profile ID or User ID
+    const doctorId = req.query.doctorId as string || user?.doctorProfile?.id;
+    const userId = user?.id;
+
+    const inbox = await getDoctorSosInbox(doctorId, userId, isControlRoom);
+
+    res.status(200).json({
+      success: true,
+      data: inbox,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Atomic Accept SOS Alert by Doctor or Control Room
+ * Second accepter receives 409 Conflict
+ */
+export async function acceptSosAlertController(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const id = String(req.params.id);
+    const user = (req as any).user;
+    const responderId = req.body.responderId || user?.doctorProfile?.id || user?.id || 'CONTROL_ROOM';
+    const responderName = req.body.responderName || user?.fullName || user?.name || 'On-Duty Physician';
+
+    const updated = await acceptSosAlert(id, responderId, responderName);
+
+    res.status(200).json({
+      success: true,
+      message: `SOS alert accepted by ${responderName}.`,
+      data: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Doctor Declines SOS Alert -> Triggers immediate escalation to next doctor in roster
+ */
+export async function declineSosAlertController(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const id = String(req.params.id);
+    const user = (req as any).user;
+    const responderId = req.body.responderId || user?.doctorProfile?.id || user?.id || 'UNKNOWN';
+
+    const updated = await declineSosAlert(id, responderId);
+
+    res.status(200).json({
+      success: true,
+      message: 'SOS alert declined. Escalating to next responder...',
+      data: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Worker Cancels SOS Alert
+ */
+export async function cancelSosAlertController(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const id = String(req.params.id);
+    const updated = await cancelSosAlert(id);
+
+    res.status(200).json({
+      success: true,
+      message: 'SOS alert cancelled.',
+      data: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Get Status & Hop Info for a specific SOS Alert (polled every 5s by Worker)
+ */
+export async function getSosAlertStatusController(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const id = String(req.params.id);
+    const statusData = await getSosAlertStatus(id);
+
+    res.status(200).json({
+      success: true,
+      data: statusData,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Retrieve active SOS alerts
  */
 export async function getActiveSosAlerts(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const alerts = await prisma.sosAlert.findMany({
       where: {
         dismissed: false,
-        status: { in: ['SENT', 'NOTIFIED', 'AWAITING', 'ACKNOWLEDGED'] },
+        status: { in: ['PENDING', 'ACCEPTED', 'SENT', 'NOTIFIED', 'AWAITING', 'ACKNOWLEDGED', 'DECLINED_ALL'] },
       },
       orderBy: { createdAt: 'desc' },
       take: 20,
@@ -179,16 +315,12 @@ export async function getActiveSosAlerts(_req: Request, res: Response, next: Nex
 }
 
 /**
- * Acknowledge or Decline an SOS alert
+ * Legacy status update (for backward compatibility)
  */
 export async function updateSosStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const id = String(req.params.id);
     const { status, respondingDoctorId } = req.body;
-
-    if (!['ACKNOWLEDGED', 'DECLINED', 'DISMISSED'].includes(status)) {
-      throw new AppError('Invalid status update', 400);
-    }
 
     const updated = await prisma.sosAlert.update({
       where: { id },

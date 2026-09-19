@@ -55,6 +55,11 @@ enum DutyStatus {
 }
 
 enum SosStatus {
+  PENDING
+  ACCEPTED
+  DECLINED_ALL
+  CANCELLED
+  RESOLVED
   SENT
   NOTIFIED
   AWAITING
@@ -104,6 +109,7 @@ model Facility {
   emergencyLogs       EmergencyAccessLog[]
   consentArtifacts    ConsentArtifact[]
   medicines           Medicine[]
+  sosAlerts           SosAlert[]
 }
 
 model Doctor {
@@ -128,6 +134,7 @@ model Doctor {
   respondedSosAlerts    SosAlert[]           @relation("RespondingDoctor")
   emergencyAccessLogs   EmergencyAccessLog[]
   targetReferrals       Referral[]
+  familyPatients        Patient[]                  @relation("PatientFamilyDoctor")
 }
 
 model Worker {
@@ -148,6 +155,7 @@ model Worker {
   updatedAt    DateTime @updatedAt
 
   patients Patient[]
+  sosAlerts SosAlert[]
 }
 
 model Patient {
@@ -177,6 +185,9 @@ model Patient {
   healthWorkerId     String?
   healthWorker       Worker?        @relation(fields: [healthWorkerId], references: [id])
   healthWorkerName   String?
+  familyDoctorId     String?
+  familyDoctor       Doctor?        @relation("PatientFamilyDoctor", fields: [familyDoctorId], references: [id])
+  familyDoctorName   String?
   registeredAt       String
   consentStatus      ConsentStatus  @default(GRANTED)
   vaccinationStatus  String         @default("Fully vaccinated")
@@ -277,22 +288,51 @@ model SosAlert {
   role               String
   senderId           String?
   sender             User?      @relation("Sender", fields: [senderId], references: [id])
+  raisedByWorkerId   String?
+  raisedByWorker     Worker?    @relation(fields: [raisedByWorkerId], references: [id])
   patientId          String?
   patient            Patient?   @relation(fields: [patientId], references: [id])
   patientHealthId    String
+  facilityId         String?
+  facility           Facility?  @relation(fields: [facilityId], references: [id])
   location           String
   ts                 String
   isOffline          Boolean    @default(false)
   dismissed          Boolean    @default(false)
-  status             SosStatus  @default(SENT)
+  status             SosStatus  @default(PENDING)
   escalationLevel    Int        @default(0)
+  escalationIndex    Int        @default(0)
+  escalationDeadline DateTime?
   targetedDoctorId   String?
   targetedDoctor     Doctor?    @relation("TargetDoctor", fields: [targetedDoctorId], references: [id])
+  currentResponderId String?
   respondingDoctorId String?
   respondingDoctor   Doctor?    @relation("RespondingDoctor", fields: [respondingDoctorId], references: [id])
+  acceptedBy         String?
+  acceptedAt         DateTime?
+  vitalsSnapshot     String?
   timeoutSeconds     Int        @default(90)
+  escalationEvents   SosEscalationEvent[]
+  emergencyLogs      EmergencyAccessLog[]
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
+}
+
+enum SosEscalationAction {
+  NOTIFIED
+  ACCEPTED
+  DECLINED
+  TIMED_OUT
+}
+
+model SosEscalationEvent {
+  id            String              @id @default(uuid())
+  sosAlertId    String
+  sosAlert      SosAlert            @relation(fields: [sosAlertId], references: [id], onDelete: Cascade)
+  responderId   String?
+  responderName String?
+  action        SosEscalationAction
+  timestamp     DateTime            @default(now())
 }
 
 model ConsentArtifact {
@@ -323,6 +363,8 @@ model ConsentArtifact {
 model EmergencyAccessLog {
   id              String    @id @default(uuid())
   logCode         String    @unique
+  sosAlertId      String?
+  sosAlert        SosAlert? @relation(fields: [sosAlertId], references: [id])
   patientId       String?
   patient         Patient?  @relation(fields: [patientId], references: [id])
   patientHealthId String

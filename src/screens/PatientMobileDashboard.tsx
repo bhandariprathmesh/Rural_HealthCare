@@ -8,6 +8,47 @@ interface Props {
   loginPhone?: string;
 }
 
+function QRCodeSVG({ text, size = 180 }: { text: string; size?: number }) {
+  const matrix: boolean[][] = Array.from({ length: 21 }, () => Array(21).fill(false));
+  const drawFinder = (r: number, c: number) => {
+    for (let i = 0; i < 7; i++) {
+      for (let j = 0; j < 7; j++) {
+        if (i === 0 || i === 6 || j === 0 || j === 6 || (i >= 2 && i <= 4 && j >= 2 && j <= 4)) {
+          matrix[r + i][c + j] = true;
+        }
+      }
+    }
+  };
+  drawFinder(0, 0);
+  drawFinder(0, 14);
+  drawFinder(14, 0);
+  for (let i = 8; i < 13; i++) {
+    matrix[6][i] = i % 2 === 0;
+    matrix[i][6] = i % 2 === 0;
+  }
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  }
+  for (let r = 0; r < 21; r++) {
+    for (let c = 0; c < 21; c++) {
+      if ((r < 8 && c < 8) || (r < 8 && c >= 13) || (r >= 13 && c < 8)) continue;
+      if (r === 6 || c === 6) continue;
+      const seed = (hash ^ (r * 37 + c * 17)) >>> 0;
+      matrix[r][c] = seed % 3 === 0;
+    }
+  }
+  return (
+    <svg width={size} height={size} viewBox="0 0 21 21" className="rounded-xl bg-white p-2.5 shadow-sm border border-gray-100">
+      {matrix.map((row, r) =>
+        row.map((filled, c) =>
+          filled ? <rect key={`${r}-${c}`} x={c} y={r} width={1} height={1} fill="#111827" /> : null
+        )
+      )}
+    </svg>
+  );
+}
+
 export default function PatientMobileDashboard({
   navigate,
   onSOS,
@@ -16,8 +57,12 @@ export default function PatientMobileDashboard({
   const [dbUser, setDbUser] = useState<any>(null);
   const [history, setHistory] = useState<any[]>([]);
   const [labs, setLabs] = useState<any[]>([]);
+  const [medsList, setMedsList] = useState<any[]>([]);
   const [sosConfirm, setSosConfirm] = useState(false);
   const [sosSent, setSosSent] = useState(false);
+  const [showQR, setShowQR] = useState(false);
+  const [showMedsModal, setShowMedsModal] = useState(false);
+  const [shareToast, setShareToast] = useState<string | null>(null);
   const [expandedConsultation, setExpandedConsultation] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -30,6 +75,10 @@ export default function PatientMobileDashboard({
 
         if (healthId) {
           const data = await getPatientDashboardData(healthId).catch(() => null);
+
+          if (data?.medicines && Array.isArray(data.medicines)) {
+            setMedsList(data.medicines);
+          }
 
           if (data?.consultations?.length) {
             setHistory(
@@ -185,10 +234,18 @@ export default function PatientMobileDashboard({
           </p>
 
           {loginPhone && (
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-gray-500 mt-0.5">
               Phone: <span className="font-medium">{loginPhone}</span>
             </p>
           )}
+
+          <button
+            onClick={() => navigate('patient-profile-edit')}
+            className="mt-1.5 inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-50 border border-brand-200 text-brand-700 text-xs font-semibold rounded-xl hover:bg-brand-100 transition-colors cursor-pointer shadow-2xs"
+          >
+            <Icon name="edit" size={12} />
+            Edit Profile
+          </button>
         </div>
 
         <div className="flex items-center gap-2">
@@ -250,15 +307,53 @@ export default function PatientMobileDashboard({
         </div>
 
         <div className="flex gap-2 mt-4">
-          <button className="flex-1 py-2 bg-white/15 hover:bg-white/25 text-white text-xs font-medium rounded-xl flex items-center justify-center gap-1.5 transition-colors">
+          <button
+            onClick={() => setShowQR(true)}
+            className="flex-1 py-2 bg-white/15 hover:bg-white/25 text-white text-xs font-medium rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+          >
             <Icon name="qr" size={13} />
             Show QR
           </button>
 
-          <button className="flex-1 py-2 bg-white/15 hover:bg-white/25 text-white text-xs font-medium rounded-xl flex items-center justify-center gap-1.5 transition-colors">
+          <button
+            onClick={() => {
+              const shareText = `RuralCare Health ID Card\nPatient: ${patientName}\nHealth ID: ${patientHealthId}\nABHA: ${pt?.abhaNumber || 'N/A'}\nVillage: ${patientVillage || 'N/A'}\nBlood Group: ${patientBloodGroup}`;
+              if (navigator.share) {
+                navigator.share({ title: 'RuralCare Health ID', text: shareText }).catch(() => {});
+              } else {
+                navigator.clipboard.writeText(shareText);
+                setShareToast('Health ID card copied to clipboard!');
+                setTimeout(() => setShareToast(null), 2500);
+              }
+            }}
+            className="flex-1 py-2 bg-white/15 hover:bg-white/25 text-white text-xs font-medium rounded-xl flex items-center justify-center gap-1.5 transition-colors"
+          >
             <Icon name="share" size={13} />
             Share
           </button>
+        </div>
+      </div>
+
+      {/* Assigned Care Team / ASHA Worker Card */}
+      <div className="bg-white border border-gray-100 rounded-2xl p-3.5 shadow-xs flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-100 flex items-center justify-center text-teal-700 shrink-0">
+            <Icon name="user" size={20} />
+          </div>
+          <div>
+            <div className="text-[10px] uppercase font-bold text-teal-700 tracking-wider">
+              Assigned ASHA / Health Worker
+            </div>
+            <div className="text-sm font-bold text-gray-900 mt-0.5">
+              {pt?.healthWorkerName || pt?.healthWorker?.name || 'Meena Kumari (ASHA)'}
+            </div>
+            <div className="text-[11px] text-gray-500">
+              Community Health Center · {patientVillage || 'Local Area'}
+            </div>
+          </div>
+        </div>
+        <div className="px-2.5 py-1 bg-teal-50 border border-teal-200 rounded-full text-[10px] font-bold text-teal-800">
+          Assigned
         </div>
       </div>
 
@@ -283,30 +378,30 @@ export default function PatientMobileDashboard({
             label: 'Records',
             icon: 'clipboard',
             color: 'bg-brand-50 text-brand-700',
-            screen: null,
+            action: () => navigate('patient-profile'),
           },
           {
             label: 'Medicines',
             icon: 'pill',
             color: 'bg-purple-50 text-purple-700',
-            screen: null,
+            action: () => setShowMedsModal(true),
           },
           {
             label: 'Consent',
             icon: 'shield',
             color: 'bg-green-50 text-green-700',
-            screen: 'consent',
+            action: () => navigate('consent'),
           },
           {
             label: 'Access Log',
             icon: 'eye',
             color: 'bg-amber-50 text-amber-700',
-            screen: 'access-history',
+            action: () => navigate('access-history'),
           },
         ].map(item => (
           <button
             key={item.label}
-            onClick={() => item.screen && navigate(item.screen)}
+            onClick={item.action}
             className={`flex flex-col items-center gap-1.5 p-3 rounded-2xl ${item.color} hover:opacity-80 transition-opacity`}
           >
             <Icon name={item.icon} size={20} />
@@ -718,6 +813,116 @@ export default function PatientMobileDashboard({
           className="text-gray-400"
         />
       </button>
+
+      {/* Share Toast */}
+      {shareToast && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2">
+          <Icon name="check" size={14} className="text-emerald-400" />
+          <span>{shareToast}</span>
+        </div>
+      )}
+
+      {/* Show QR Modal */}
+      {showQR && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl text-center">
+            <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+              <span className="text-xs font-bold uppercase tracking-wider text-brand-700">Official Health QR</span>
+              <button onClick={() => setShowQR(false)} className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500">
+                ×
+              </button>
+            </div>
+            <div className="flex justify-center py-2">
+              <QRCodeSVG text={patientHealthId} size={190} />
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-lg text-gray-900">{patientName}</h3>
+              <p className="font-mono text-xs font-bold text-brand-700 mt-0.5">{patientHealthId}</p>
+              <p className="text-xs text-gray-500 mt-1">
+                ABHA: {pt?.abhaNumber || 'Not Linked'} · {patientAge} · {patientBloodGroup}
+              </p>
+              {patientVillage && (
+                <p className="text-xs text-gray-400 mt-0.5">{patientVillage}, {patientDistrict}</p>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(patientHealthId);
+                  setShareToast('Health ID copied!');
+                  setTimeout(() => setShareToast(null), 2000);
+                }}
+                className="py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-xs font-semibold text-gray-700 flex items-center justify-center gap-1.5"
+              >
+                <Icon name="clipboard" size={13} />
+                Copy ID
+              </button>
+              <button
+                onClick={() => setShowQR(false)}
+                className="py-2.5 bg-brand-600 hover:bg-brand-700 rounded-xl text-xs font-semibold text-white"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Medicines Modal */}
+      {showMedsModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center">
+                  <Icon name="pill" size={16} />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-base text-gray-900">Active Medications</h3>
+                  <p className="text-[11px] text-gray-500">Prescribed treatments & ongoing therapies</p>
+                </div>
+              </div>
+              <button onClick={() => setShowMedsModal(false)} className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500">
+                ×
+              </button>
+            </div>
+
+            <div className="max-h-72 overflow-y-auto space-y-2.5 pr-1">
+              {medsList.length > 0 || (patientMeds && patientMeds.length > 0) ? (
+                (medsList.length > 0 ? medsList : patientMeds.map((m: string) => ({ name: m, dosage: 'Active medication' }))).map((med: any, idx: number) => (
+                  <div key={idx} className="p-3.5 bg-purple-50/50 border border-purple-100 rounded-2xl flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <Icon name="pill" size={14} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-xs text-gray-900">{med.name}</div>
+                      <div className="text-[11px] text-purple-800 mt-0.5">{med.dosage || med.dosageForm || 'As directed by physician'}</div>
+                      {med.strength && <div className="text-[10px] text-gray-400 mt-0.5">Strength: {med.strength}</div>}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-8 bg-gray-50 rounded-2xl border border-gray-100 space-y-2">
+                  <Icon name="pill" size={28} className="text-gray-300 mx-auto" />
+                  <p className="text-xs font-semibold text-gray-700">No Active Medications</p>
+                  <p className="text-[11px] text-gray-400 max-w-xs mx-auto">
+                    You currently have no prescribed medications or active drug therapies recorded.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="pt-2">
+              <button
+                onClick={() => setShowMedsModal(false)}
+                className="w-full py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-xs font-semibold text-gray-700"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -47,6 +47,18 @@ export async function getReferrals(
         ? req.query.patientId
         : undefined;
 
+    const fromWorkerId =
+      typeof req.query.fromWorkerId === 'string'
+        ? req.query.fromWorkerId
+        : typeof req.query.workerId === 'string'
+          ? req.query.workerId
+          : undefined;
+
+    const fromWorker =
+      typeof req.query.fromWorker === 'string'
+        ? req.query.fromWorker
+        : undefined;
+
     const where: any = {};
 
     if (status && Object.values(ReferralStatus).includes(status as ReferralStatus)) {
@@ -65,6 +77,17 @@ export async function getReferrals(
         { patientId },
         { patient: { healthId: patientId } },
       ];
+    }
+
+    if (fromWorkerId) {
+      where.fromWorkerId = fromWorkerId;
+    }
+
+    if (fromWorker) {
+      where.fromWorker = {
+        contains: fromWorker,
+        mode: 'insensitive',
+      };
     }
 
     const referrals = await prisma.referral.findMany({

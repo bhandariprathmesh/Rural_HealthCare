@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { RiskLevel } from '@prisma/client';
+import { AppError } from '../middleware/error.js';
+import { checkPatientAccess } from '../services/accessControl.service.js';
 
 const generateAssessmentSchema = z.object({
   patientId: z.string().min(1),
@@ -54,22 +56,25 @@ export async function generateAssessment(req: Request, res: Response, next: Next
 
     const assessmentCode = `ASMT-${Date.now()}`;
 
-    // Ensure patient exists (mocking if it doesn't since DB is empty)
-    let patient = await prisma.patient.findUnique({ where: { healthId: data.patientId } });
-    if(!patient) {
-        patient = await prisma.patient.findFirst(); // grab any
-        if(!patient) {
-            patient = await prisma.patient.create({
-                data: {
-                    healthId: data.patientId,
-                    name: 'Guest Patient', nameHi: '', age: 30, dob: '1996-01-01', gender: 'Other',
-                    bloodGroup: 'O+', phone: '9999999999', village: 'Demo', district: 'Demo', state: 'Demo',
-                    address: 'Demo', emergencyContact: {}, allergies: [], chronicConditions: [], currentMedications: [],
-                    registeredAt: new Date().toISOString()
-                }
-            });
-        }
+    // Consent-First Authorization Check
+    const user = (req as any).user;
+    const emergencyToken = (req.headers['x-emergency-token'] || req.headers['emergency-token']) as string | undefined;
+
+    const access = await checkPatientAccess({
+      user,
+      patientIdOrHealthId: data.patientId,
+      requiredScope: 'HEALTH_ASSESSMENT',
+      emergencyToken,
+    });
+
+    if (!access.hasAccess || !access.patient) {
+      throw new AppError(
+        access.reason || 'Patient consent required to record health assessment, symptoms, and vitals.',
+        403
+      );
     }
+
+    const patient = access.patient;
 
     const assessment = await prisma.aIAssessment.create({
       data: {

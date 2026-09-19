@@ -63,7 +63,7 @@ const registerSchema = z.object({
 });
 
 const loginSchema = z.object({
-  email: z.string().email('Invalid email address'),
+  email: z.string().min(1, 'Email or phone number is required'),
   password: z.string(),
   role: z.enum([
     'WORKER',
@@ -450,9 +450,15 @@ export async function login(
       role,
     } = loginSchema.parse(req.body);
 
+    const identifier = email.trim();
     const user =
-      await prisma.user.findUnique({
-        where: { email },
+      await prisma.user.findFirst({
+        where: {
+          OR: [
+            { email: identifier.toLowerCase() },
+            { phone: identifier },
+          ],
+        },
 
         include: {
           doctorProfile: {
@@ -475,6 +481,30 @@ export async function login(
         'Invalid email or password.',
         401
       );
+    }
+
+    if (user.role === 'PATIENT' && !user.patientProfile) {
+      const createdPatient = await prisma.patient.create({
+        data: {
+          healthId: genHealthId(),
+          userId: user.id,
+          name: user.fullName,
+          nameHi: user.fullName,
+          dob: '1995-01-01',
+          age: 30,
+          gender: 'O',
+          bloodGroup: 'Unknown',
+          phone: user.phone || '9829000000',
+          village: 'Govindpur',
+          district: 'Bikaner',
+          state: 'Rajasthan',
+          emergencyContact: Prisma.JsonNull,
+          address: 'Govindpur, Bikaner, Rajasthan',
+          registeredAt: new Date().toISOString(),
+          consentStatus: 'GRANTED',
+        },
+      });
+      (user as any).patientProfile = createdPatient;
     }
 
     if (user.role !== role) {
@@ -610,7 +640,16 @@ export async function getCurrentUser(
 
           workerProfile: true,
 
-          patientProfile: true,
+          patientProfile: {
+            include: {
+              familyDoctor: {
+                include: {
+                  facility: true,
+                },
+              },
+              healthWorker: true,
+            },
+          },
         },
       });
 
@@ -619,6 +658,30 @@ export async function getCurrentUser(
         'User account not found.',
         404
       );
+    }
+
+    if (user.role === 'PATIENT' && !user.patientProfile) {
+      const createdPatient = await prisma.patient.create({
+        data: {
+          healthId: genHealthId(),
+          userId: user.id,
+          name: user.fullName,
+          nameHi: user.fullName,
+          dob: '1995-01-01',
+          age: 30,
+          gender: 'O',
+          bloodGroup: 'Unknown',
+          phone: user.phone || '9829000000',
+          village: 'Govindpur',
+          district: 'Bikaner',
+          state: 'Rajasthan',
+          emergencyContact: Prisma.JsonNull,
+          address: 'Govindpur, Bikaner, Rajasthan',
+          registeredAt: new Date().toISOString(),
+          consentStatus: 'GRANTED',
+        },
+      });
+      (user as any).patientProfile = createdPatient;
     }
 
     res.status(200).json({
