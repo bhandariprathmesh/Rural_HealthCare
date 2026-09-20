@@ -1,7 +1,23 @@
-const BASE = 'http://localhost:5000/api/v1';
+import { API_BASE_URL } from '../api/client';
+
+function buildUrl(path: string): string {
+  let clean = path.trim();
+  if (clean.startsWith('http://') || clean.startsWith('https://')) {
+    return clean;
+  }
+  if (clean.startsWith('/api/v1')) {
+    clean = clean.slice('/api/v1'.length);
+  } else if (clean.startsWith('api/v1')) {
+    clean = clean.slice('api/v1'.length);
+  }
+  if (!clean.startsWith('/')) {
+    clean = `/${clean}`;
+  }
+  return `${API_BASE_URL}${clean}`;
+}
 
 export async function apiPost(path: string, body: object, token?: string) {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(buildUrl(path), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -25,7 +41,7 @@ export async function apiPost(path: string, body: object, token?: string) {
 }
 
 export async function apiGet(path: string, token?: string) {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(buildUrl(path), {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   let data: any = {};

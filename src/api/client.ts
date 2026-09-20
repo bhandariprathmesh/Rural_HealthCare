@@ -4,8 +4,38 @@
 
 // ============================================================================
 
-export const API_BASE_URL =
-  (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:5000/api/v1"
+function resolveApiBaseUrl(): string {
+  const envUrl = (
+    import.meta.env.VITE_API_URL ||
+    (import.meta as any).env?.VITE_API_BASE_URL ||
+    ''
+  ).trim();
+
+  let base = envUrl;
+
+  if (!base) {
+    if (import.meta.env.DEV) {
+      base = 'http://localhost:5000';
+    } else {
+      // Production fallback so deployed frontend never calls localhost
+      base = 'https://rural-healthcare-342y.onrender.com';
+    }
+  }
+
+  // Strip trailing slashes
+  base = base.replace(/\/+$/, '');
+
+  // Normalize /api/v1 suffix: ensure not missing and not duplicated
+  if (base.endsWith('/api/v1')) {
+    return base;
+  }
+  if (base.endsWith('/api')) {
+    return `${base}/v1`;
+  }
+  return `${base}/api/v1`;
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 export interface ApiResponse<T = any> {
   success: boolean
@@ -118,7 +148,26 @@ async function request<T>(
 
   options: RequestInit = {},
 ): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`
+  let cleanEndpoint = endpoint.trim();
+  let url: string;
+
+  if (cleanEndpoint.startsWith('http://') || cleanEndpoint.startsWith('https://')) {
+    url = cleanEndpoint;
+  } else {
+    // Strip accidental leading /api/v1 or /api
+    if (cleanEndpoint.startsWith('/api/v1')) {
+      cleanEndpoint = cleanEndpoint.slice('/api/v1'.length);
+    } else if (cleanEndpoint.startsWith('api/v1')) {
+      cleanEndpoint = cleanEndpoint.slice('api/v1'.length);
+    } else if (cleanEndpoint.startsWith('/api/')) {
+      cleanEndpoint = cleanEndpoint.slice('/api'.length);
+    }
+
+    if (!cleanEndpoint.startsWith('/')) {
+      cleanEndpoint = `/${cleanEndpoint}`;
+    }
+    url = `${API_BASE_URL}${cleanEndpoint}`;
+  }
 
   const token = getToken()
 
