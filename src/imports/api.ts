@@ -72,13 +72,26 @@ export const referrals = {
 };
 
 export function saveToken(token: string) {
-  localStorage.setItem('rc_token', token);
+  if (typeof sessionStorage !== 'undefined') {
+    sessionStorage.setItem('rc_token', token);
+  }
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('rc_token');
+  }
 }
 
 export function getToken() {
-  return localStorage.getItem('rc_token');
+  if (typeof sessionStorage !== 'undefined') {
+    return sessionStorage.getItem('rc_token');
+  }
+  return null;
 }
 
 export function clearToken() {
-  localStorage.removeItem('rc_token');
+  if (typeof sessionStorage !== 'undefined') {
+    sessionStorage.removeItem('rc_token');
+  }
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem('rc_token');
+  }
 }

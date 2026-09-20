@@ -103,7 +103,6 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
       )
       return
     }
-
     setIsSubmitting(true)
     let payload: any = null
 
