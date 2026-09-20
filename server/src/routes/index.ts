@@ -13,11 +13,13 @@ import dashboardRoutes from './dashboard.routes.js';
 import abdmMockRoutes from './abdm.mock.routes.js';
 import emergencyRoutes from './emergency.routes.js';
 import symptomRoutes from './symptom.routes.js';
+import mchRoutes from './mch.routes.js';
 
 const router = Router();
 
 router.use('/auth', authRoutes);
 router.use('/patients', patientRoutes);
+router.use('/mch', mchRoutes);
 router.use('/assessments', assessmentRoutes);
 router.use('/symptoms', symptomRoutes);
 router.use('/doctors', doctorRoutes);

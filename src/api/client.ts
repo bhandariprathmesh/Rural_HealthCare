@@ -1237,3 +1237,155 @@ export async function approvePatientConsent(consentId: string): Promise<any> {
   });
   return res.data;
 }
+
+// ─── Maternal & Child Health (MCH) Lifecycle & Immunization Tracker ──────────
+
+import { MCH_RECORDS, MCH_DUE_ITEMS } from '../data';
+
+export async function getMchDueList(params?: {
+  village?: string;
+  category?: string;
+  urgency?: string;
+}): Promise<{ stats: any; dueItems: any[]; records: any[]; currentWeekLabel: string; village: string }> {
+  const queryParts: string[] = [];
+  if (params?.village) queryParts.push(`village=${encodeURIComponent(params.village)}`);
+  if (params?.category) queryParts.push(`category=${encodeURIComponent(params.category)}`);
+  if (params?.urgency) queryParts.push(`urgency=${encodeURIComponent(params.urgency)}`);
+  const qs = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
+
+  try {
+    const res = await request<ApiResponse<any>>(`/mch/due-list${qs}`);
+    if (res?.data) {
+      return res.data;
+    }
+  } catch {
+    // offline/fallback
+  }
+
+  const v = params?.village?.trim();
+  const c = params?.category?.trim();
+  const u = params?.urgency?.trim();
+
+  let records = [...MCH_RECORDS];
+  if (v && v.toLowerCase() !== 'all') {
+    records = records.filter(r => (r.assignedVillage || r.patientVillage)?.toLowerCase() === v.toLowerCase());
+  }
+
+  let items = [...MCH_DUE_ITEMS];
+  if (v && v.toLowerCase() !== 'all') {
+    items = items.filter(i => i.village.toLowerCase() === v.toLowerCase());
+  }
+  if (c && c !== 'all') {
+    items = items.filter(i => i.category === c);
+  }
+  if (u === 'overdue') {
+    items = items.filter(i => i.status === 'overdue');
+  } else if (u === 'due') {
+    items = items.filter(i => i.status === 'due');
+  } else if (u === 'hrp') {
+    items = items.filter(i => i.isHighRisk);
+  }
+
+  const stats = {
+    totalBeneficiaries: records.length,
+    overdueCount: items.filter(i => i.status === 'overdue').length,
+    dueThisWeekCount: items.filter(i => i.status === 'due').length,
+    highRiskCount: records.filter(r => r.isHighRisk).length,
+    maternalDueCount: items.filter(i => i.category === 'maternal').length,
+    childDueCount: items.filter(i => i.category === 'child').length,
+  };
+
+  return {
+    stats,
+    dueItems: items,
+    records,
+    currentWeekLabel: 'Week of Sept 15–21, 2026',
+    village: v || 'Govindpur',
+  };
+}
+
+export async function getPatientMchRecord(patientId: string): Promise<any> {
+  try {
+    const res = await request<ApiResponse<any>>(`/mch/patient/${encodeURIComponent(patientId)}`);
+    if (res?.data) {
+      return res.data;
+    }
+  } catch {
+    // fallback
+  }
+
+  const found = MCH_RECORDS.find(
+    r => r.patientId === patientId || r.patientHealthId === patientId || r.id === patientId
+  );
+  return found || MCH_RECORDS[0];
+}
+
+export async function updateMchMilestone(
+  recordId: string,
+  milestoneCode: string,
+  payload: any
+): Promise<any> {
+  try {
+    const res = await request<ApiResponse<any>>(
+      `/mch/${encodeURIComponent(recordId)}/milestones/${encodeURIComponent(milestoneCode)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      }
+    );
+    if (res?.data) {
+      return res.data;
+    }
+  } catch {
+    // local fallback
+  }
+
+  const targetRecord = MCH_RECORDS.find(r => r.id === recordId || r.patientId === recordId);
+  if (targetRecord && Array.isArray(targetRecord.milestones)) {
+    const m = targetRecord.milestones.find((x: any) => x.code.toLowerCase() === milestoneCode.toLowerCase() || x.id === milestoneCode);
+    if (m) {
+      m.status = payload.status || 'completed';
+      m.completedDate = payload.completedDate || new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+      if (payload.administeredBy) m.administeredBy = payload.administeredBy;
+      if (payload.batchNumber) m.batchNumber = payload.batchNumber;
+      if (payload.notes) m.notes = payload.notes;
+    }
+  }
+
+  const dueItemIndex = MCH_DUE_ITEMS.findIndex(
+    i => (i.recordId === recordId || i.patientId === recordId) && i.milestoneCode.toLowerCase() === milestoneCode.toLowerCase()
+  );
+  if (dueItemIndex >= 0) {
+    MCH_DUE_ITEMS.splice(dueItemIndex, 1);
+  }
+
+  return { success: true };
+}
+
+export async function createMchRecord(payload: any): Promise<any> {
+  try {
+    const res = await request<ApiResponse<any>>('/mch', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    if (res?.data) {
+      return res.data;
+    }
+  } catch {
+    // local fallback
+  }
+
+  const newRec: any = {
+    id: `mch-${Date.now()}`,
+    ...payload,
+    milestones: [
+      { id: 'anc-1', code: 'ANC-1', name: 'Antenatal Checkup 1', category: 'maternal', recommendedWeekOrAge: '12th week', dueDate: '14 Mar 2026', status: 'completed' },
+      { id: 'tt-1', code: 'TT-1', name: 'Tetanus Toxoid 1', category: 'maternal', recommendedWeekOrAge: 'Early pregnancy', dueDate: '14 Mar 2026', status: 'completed' },
+      { id: 'ifa-1', code: 'IFA-1', name: 'IFA Distribution (100 Tabs)', category: 'maternal', recommendedWeekOrAge: '14th week', dueDate: '14 Mar 2026', status: 'completed' },
+      { id: 'anc-2', code: 'ANC-2', name: 'Antenatal Checkup 2', category: 'maternal', recommendedWeekOrAge: '20th week', dueDate: '12 May 2026', status: 'completed' },
+      { id: 'anc-3', code: 'ANC-3', name: 'Antenatal Checkup 3', category: 'maternal', recommendedWeekOrAge: '28th week', dueDate: '22 Sep 2026', status: 'due' },
+    ],
+  };
+  MCH_RECORDS.unshift(newRec);
+  return newRec;
+}

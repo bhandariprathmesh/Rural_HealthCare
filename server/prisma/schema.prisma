@@ -202,6 +202,7 @@ model Patient {
   emergencyAccessLogs EmergencyAccessLog[]
   sosAlerts           SosAlert[]
   aiAssessments       AIAssessment[]
+  mchRecords          MchRecord[]
 }
 
 model Consultation {
@@ -561,3 +562,35 @@ model MockABHAProfile {
   updatedAt       DateTime @updatedAt
 }
 
+enum PregnancyStatus {
+  PREGNANT
+  POSTPARTUM
+  DELIVERED
+  NOT_PREGNANT
+}
+
+model MchRecord {
+  id                 String          @id @default(uuid())
+  patientId          String
+  pregnancyStatus    PregnancyStatus @default(PREGNANT)
+  edd                String?
+  lmp                String?
+  gestationalWeeks   Int?            @default(12)
+  isHighRisk         Boolean         @default(false)
+  hrpIndicators      String[]
+  gravida            Int?            @default(1)
+  para               Int?            @default(0)
+  milestones         Json
+  childName          String?
+  childDob           String?
+  childGender        String?
+  childAgeWeeks      Int?
+  nextScheduledDate  String?
+  assignedVillage    String?
+  assignedWorkerId   String?
+  notes              String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  patient            Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
+}

@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { AppError } from '../middleware/error.js';
+import { DEMO_MCH_RECORDS } from './mch.controller.js';
 
 /**
  * Admin Dashboard Aggregated Metrics.
@@ -180,6 +181,66 @@ export async function getWorkerDashboard(_req: Request, res: Response, next: Nex
       riskLevel: (r.riskLevel || 'LOW').toLowerCase(),
     }));
 
+    // Extract MCH alerts & due list for worker
+    let mchRecords: any[] = [];
+    try {
+      mchRecords = await (prisma as any).mchRecord.findMany({
+        include: { patient: true },
+        orderBy: { updatedAt: 'desc' },
+      });
+    } catch {
+      mchRecords = [];
+    }
+
+    const effectiveMch = mchRecords.length > 0
+      ? mchRecords.map(r => ({
+          ...r,
+          patientName: r.patient?.name || r.childName || 'MCH Beneficiary',
+          patientHealthId: r.patient?.healthId || 'RHC-2026',
+          patientPhone: r.patient?.phone || '',
+          patientVillage: r.assignedVillage || r.patient?.village || 'Govindpur',
+          milestones: Array.isArray(r.milestones) ? r.milestones : [],
+        }))
+      : DEMO_MCH_RECORDS;
+
+    const mchDueItems: any[] = [];
+    effectiveMch.forEach(record => {
+      const milestones = Array.isArray(record.milestones) ? record.milestones : [];
+      milestones.forEach((m: any) => {
+        if (m.status === 'due' || m.status === 'overdue') {
+          mchDueItems.push({
+            id: `${record.id}-${m.code}`,
+            recordId: record.id,
+            patientId: record.patientId,
+            patientName: record.patientName,
+            healthId: record.patientHealthId,
+            phone: record.patientPhone,
+            village: record.assignedVillage || record.patientVillage,
+            isHighRisk: record.isHighRisk,
+            hrpIndicators: record.hrpIndicators || [],
+            category: m.category,
+            milestoneCode: m.code,
+            milestoneName: m.name,
+            dueDate: m.dueDate,
+            status: m.status,
+            pregnancyStatus: record.pregnancyStatus,
+            gestationalWeeks: record.gestationalWeeks,
+            childName: record.childName,
+            childAge: record.childAgeWeeks ? `${record.childAgeWeeks} weeks` : undefined,
+            notes: m.notes,
+            recommendedWeekOrAge: m.recommendedWeekOrAge,
+          });
+        }
+      });
+    });
+
+    const mchAlerts = {
+      totalBeneficiaries: effectiveMch.length,
+      overdueCount: mchDueItems.filter(i => i.status === 'overdue').length,
+      dueThisWeekCount: mchDueItems.filter(i => i.status === 'due').length,
+      highRiskCount: effectiveMch.filter(r => r.isHighRisk).length,
+    };
+
     res.status(200).json({
       success: true,
       data: {
@@ -188,12 +249,17 @@ export async function getWorkerDashboard(_req: Request, res: Response, next: Nex
           registeredPatients: totalPatientsCount,
           pendingFollowUps: pendingFollowUpsCount,
           highRiskCount: highRiskCount,
+          mchOverdueCount: mchAlerts.overdueCount,
+          mchDueThisWeekCount: mchAlerts.dueThisWeekCount,
         },
         patients,
         highRiskPatients,
         referrals: mappedReferrals,
         pendingReferrals: mappedReferrals.filter(r => r.status === 'pending'),
         onDutyDoctors,
+        mchRecords: effectiveMch,
+        mchDueItems,
+        mchAlerts,
       },
     });
   } catch (err) {
@@ -486,6 +552,27 @@ export async function getPatientDashboard(req: Request, res: Response, next: Nex
           dosage: 'As advised by doctor',
         }));
 
+    // Find linked MCH Record for digital MCP Card
+    let mchRecord: any = null;
+    try {
+      mchRecord = await (prisma as any).mchRecord.findFirst({
+        where: {
+          OR: [
+            { patientId: patient.id },
+            { patientId: patient.healthId },
+          ],
+        },
+      });
+    } catch {
+      mchRecord = null;
+    }
+
+    if (!mchRecord) {
+      mchRecord = DEMO_MCH_RECORDS.find(
+        r => r.patientId === patient.id || r.patientHealthId === patient.healthId || r.patientName.toLowerCase() === patient.name.toLowerCase()
+      ) || (patient.gender === 'F' ? DEMO_MCH_RECORDS[0] : null);
+    }
+
     res.status(200).json({
       success: true,
       data: {
@@ -495,6 +582,7 @@ export async function getPatientDashboard(req: Request, res: Response, next: Nex
         consents: patient.consentEntries,
         medicines: formattedMedicines,
         labReports,
+        mchRecord,
       },
     });
   } catch (err) {
