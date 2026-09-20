@@ -525,6 +525,11 @@ export default function App() {
   }, [role, currentUser, screen]);
 
   useEffect(() => {
+    // Purge legacy development token in localStorage if no active sessionStorage session exists
+    if (typeof localStorage !== 'undefined' && typeof sessionStorage !== 'undefined' && !sessionStorage.getItem('rc_token')) {
+      localStorage.removeItem('rc_token');
+    }
+
     const token = getToken();
 
     if (!token) {
