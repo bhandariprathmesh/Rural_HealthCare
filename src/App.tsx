@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Role } from './types';
-import { Icon, OfflineIndicator } from './components/shared';
-import { getCurrentUser, getToken, clearToken, dispatchSosAlert, getActiveSosAlerts, acceptSosAlert, declineSosAlert } from './api/client';
+import { Icon, OfflineIndicator, ErrorBoundary } from './components/shared';
+import { getCurrentUser, getToken, clearToken, dispatchSosAlert, getActiveSosAlerts, acceptSosAlert, declineSosAlert, getActiveTeleconsultationCall } from './api/client';
 import { syncEngine } from './services/syncEngine';
 
 import LoginScreen from './screens/LoginScreen';
@@ -23,6 +23,7 @@ import OfflineMode from './screens/OfflineMode';
 import SyncCenter from './screens/SyncCenter';
 import PatientMobileDashboard from './screens/PatientMobileDashboard';
 import AdminDashboard from './screens/AdminDashboard';
+import TeleconsultationRoom from './screens/TeleconsultationRoom';
 
 interface NavItem {
   id: string;
@@ -129,6 +130,11 @@ const NAV: Record<Role, NavItem[]> = {
       icon: 'dashboard',
     },
     {
+      id: 'teleconsultation',
+      label: 'Teleconsultation',
+      icon: 'video',
+    },
+    {
       id: 'doctor-patient-view',
       label: 'Patient View',
       icon: 'user',
@@ -165,6 +171,11 @@ const NAV: Record<Role, NavItem[]> = {
       id: 'patient-dashboard',
       label: 'My Health',
       icon: 'home',
+    },
+    {
+      id: 'teleconsultation',
+      label: 'Video Consultation',
+      icon: 'video',
     },
     {
       id: 'patient-profile',
@@ -420,6 +431,99 @@ export default function App() {
   const [autoOpenEditProfile, setAutoOpenEditProfile] =
     useState(false);
 
+  const [teleconsultRoomId, setTeleconsultRoomId] =
+    useState<string | null>(null);
+
+  // Incoming Video Call Notification for Patients
+  const [incomingCall, setIncomingCall] = useState<{
+    sessionId: string;
+    patientId: string;
+    doctorName: string;
+    facilityName?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (role !== 'patient' || screen === 'teleconsultation') return;
+    const healthId = currentUser?.patientProfile?.healthId || currentUser?.id;
+    const patientDbId = currentUser?.patientProfile?.id;
+    const userId = currentUser?.id;
+    if (!healthId && !patientDbId && !userId) return;
+
+    let isMounted = true;
+
+    const checkCall = async () => {
+      try {
+        const queryId = healthId || patientDbId || userId;
+        if (!queryId) return;
+        const active = await getActiveTeleconsultationCall(queryId);
+        if (isMounted) {
+          if (active && (!incomingCall || incomingCall.sessionId !== active.sessionId)) {
+            setIncomingCall(active);
+          } else if (!active && incomingCall) {
+            setIncomingCall(null);
+          }
+        }
+      } catch {}
+    };
+
+    checkCall();
+    const interval = setInterval(checkCall, 2500);
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.hostname || 'localhost';
+    const ws = new WebSocket(`${protocol}//${host}:5000/teleconsultation`);
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'consultation:incoming' || data.type === 'call:incoming') {
+          const myIds = [
+            healthId,
+            patientDbId,
+            userId,
+            currentUser?.phone,
+          ]
+            .filter(Boolean)
+            .map((id) => String(id).replace(/[^a-zA-Z0-9]/g, '').toLowerCase());
+
+          const incomingIds = [
+            data.patientId,
+            data.patientDbId,
+            data.patientHealthId,
+            data.patientUserId,
+          ]
+            .filter(Boolean)
+            .map((id) => String(id).replace(/[^a-zA-Z0-9]/g, '').toLowerCase());
+
+          const isMatch = myIds.some((myId) => incomingIds.some((incId) => myId === incId));
+          if (isMatch) {
+            setIncomingCall({
+              sessionId: data.sessionId,
+              patientId: data.patientHealthId || data.patientId || healthId || '',
+              doctorName: data.doctorName,
+              facilityName: data.facilityName,
+            });
+          }
+        } else if (
+          data.type === 'call:cancelled' ||
+          data.type === 'call:end' ||
+          data.type === 'consultation:end' ||
+          data.type === 'consultation:missed'
+        ) {
+          setIncomingCall(null);
+        }
+      } catch {}
+    };
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+      try {
+        ws.close();
+      } catch {}
+    };
+  }, [role, currentUser, screen]);
+
   useEffect(() => {
     const token = getToken();
 
@@ -641,7 +745,8 @@ export default function App() {
 
   function navigate(
     nextScreen: string,
-    patientId?: string
+    patientId?: string,
+    roomId?: string
   ) {
     if (nextScreen === 'patient-profile-edit') {
       setAutoOpenEditProfile(true);
@@ -650,11 +755,26 @@ export default function App() {
       return;
     }
 
+    if (
+      nextScreen ===
+      'register-patient'
+    ) {
+      setScreen(
+        'register-patient'
+      );
+      return;
+    }
+
     setAutoOpenEditProfile(false);
     if (patientId) {
       setSelectedPatientId(
         patientId
       );
+    }
+    if (roomId) {
+      setTeleconsultRoomId(roomId);
+    } else if (nextScreen !== 'teleconsultation') {
+      setTeleconsultRoomId(null);
     }
 
     setScreen(nextScreen);
@@ -1040,8 +1160,8 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto bg-surface">
-
-          {screen ===
+          <ErrorBoundary>
+            {screen ===
             'worker-dashboard' && (
             <WorkerDashboard
               navigate={
@@ -1161,6 +1281,24 @@ export default function App() {
               }
               patientId={
                 selectedPatientId
+              }
+            />
+          )}
+
+          {screen ===
+            'teleconsultation' && (
+            <TeleconsultationRoom
+              navigate={
+                navigate
+              }
+              currentUser={
+                currentUser
+              }
+              patientId={
+                selectedPatientId || undefined
+              }
+              roomId={
+                teleconsultRoomId || undefined
               }
             />
           )}
@@ -1286,9 +1424,98 @@ export default function App() {
               }
             />
           )}
-
+          </ErrorBoundary>
         </main>
       </div>
+
+      {/* Incoming 1-to-1 Video Consultation Call Modal for Patients */}
+      {incomingCall && screen !== 'teleconsultation' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-gray-900 border border-teal-500/40 text-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-6 text-center">
+            {/* Animated Call Ring Icon */}
+            <div className="relative w-24 h-24 mx-auto flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full bg-teal-500/30 animate-ping [animation-duration:1.5s]" />
+              <div className="absolute inset-2 rounded-full bg-teal-500/20 animate-pulse" />
+              <div className="relative w-16 h-16 rounded-full bg-gradient-to-tr from-teal-500 to-emerald-600 text-white flex items-center justify-center shadow-lg">
+                <Icon name="video" size={30} className="animate-bounce [animation-duration:2s]" />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-teal-500/20 text-teal-300 rounded-full text-xs font-bold uppercase tracking-wider border border-teal-500/30">
+                <span className="w-2 h-2 rounded-full bg-teal-400 animate-pulse" />
+                Incoming Video Call
+              </div>
+              <h3 className="font-display text-xl font-bold text-white">
+                {incomingCall.doctorName}
+              </h3>
+              <p className="text-xs text-gray-300">
+                {incomingCall.facilityName || 'PHC Medical Officer'} is calling you for your confidential 1-to-1 medical consultation.
+              </p>
+            </div>
+
+            {/* Action Buttons: Accept / Decline */}
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const host = window.location.hostname || 'localhost';
+                    const ws = new WebSocket(`${protocol}//${host}:5000/teleconsultation`);
+                    ws.onopen = () => {
+                      ws.send(JSON.stringify({
+                        type: 'consultation:reject',
+                        sessionId: incomingCall.sessionId,
+                        role: 'patient',
+                      }));
+                      ws.close();
+                    };
+                  } catch {}
+                  setIncomingCall(null);
+                }}
+                className="py-3 px-4 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-2xl text-xs font-bold border border-gray-700 transition-colors cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Icon name="phone_off" size={14} />
+                Decline
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const pId = incomingCall.patientId;
+                  const sId = incomingCall.sessionId;
+                  if (incomingCall.doctorName) {
+                    localStorage.setItem('last_calling_doctor', incomingCall.doctorName);
+                  }
+                  try {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const host = window.location.hostname || 'localhost';
+                    const ws = new WebSocket(`${protocol}//${host}:5000/teleconsultation`);
+                    ws.onopen = () => {
+                      ws.send(JSON.stringify({
+                        type: 'consultation:accept',
+                        sessionId: sId,
+                        patientId: pId,
+                        role: 'patient',
+                      }));
+                      ws.close();
+                    };
+                  } catch {}
+                  setIncomingCall(null);
+                  setSelectedPatientId(pId);
+                  setTeleconsultRoomId(sId);
+                  setScreen('teleconsultation');
+                }}
+                className="py-3 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-2xl text-xs font-bold shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 animate-pulse"
+              >
+                <Icon name="video" size={16} />
+                Accept Call
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

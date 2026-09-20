@@ -13,6 +13,7 @@ import dashboardRoutes from './dashboard.routes.js';
 import abdmMockRoutes from './abdm.mock.routes.js';
 import emergencyRoutes from './emergency.routes.js';
 import symptomRoutes from './symptom.routes.js';
+import teleconsultationRoutes from './teleconsultation.routes.js';
 
 const router = Router();
 
@@ -31,5 +32,6 @@ router.use('/abdm/mock', abdmMockRoutes);
 router.use('/abdm', abdmMockRoutes);
 router.use('/emergency', emergencyRoutes);
 router.use('/sos', emergencyRoutes);
+router.use('/teleconsultation', teleconsultationRoutes);
 
 export default router;
