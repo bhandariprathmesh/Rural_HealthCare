@@ -19,11 +19,11 @@ const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:8443,http:/
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin or any localhost/127.0.0.1 development origin
       if (
         !origin ||
         allowedOrigins.includes(origin) ||
         allowedOrigins.includes('*') ||
+        origin.endsWith('.vercel.app') ||
         origin.includes('localhost') ||
         origin.includes('127.0.0.1')
       ) {
@@ -58,7 +58,6 @@ app.use((_req, _res, next) => {
 app.use(errorHandler);
 
 import { startSosEscalationSweeper } from './services/sosEscalation.service.js';
-import { setupTeleconsultationSignaling } from './services/teleconsultation.signaling.js';
 
 // Start server
 const server = app.listen(PORT, '0.0.0.0', () => {
@@ -71,9 +70,6 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 
   // Start background 10s sweeper for SOS escalation deadlines
   startSosEscalationSweeper();
-
-  // Attach WebRTC WebSocket Signaling Server
-  setupTeleconsultationSignaling(server);
 });
 
 // Graceful shutdown
