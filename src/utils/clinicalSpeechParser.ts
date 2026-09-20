@@ -670,12 +670,12 @@ export function isMatchNegated(text: string, start: number, end: number): boolea
   // 1. Check preceding text (within 35 characters, stopping at clause boundaries)
   const preWindow = text.slice(Math.max(0, start - 35), start);
   const preBoundaryMatch = preWindow.match(
-    /.*(?:[.;?!]|(?<=[^\p{L}\p{N}]|^)(?:पण|परंतु|लेकिन|मगर|किंतु|पर|but|however|except)(?=[^\p{L}\p{N}]|$)\s*)/u
+    /.*(?:[.,;?!]|(?<=[^\p{L}\p{N}]|^)(?:पण|परंतु|लेकिन|मगर|किंतु|पर|but|however|except)(?=[^\p{L}\p{N}]|$)\s*)/u
   );
   const relevantPre = preBoundaryMatch ? preWindow.slice(preBoundaryMatch[0].length) : preWindow;
 
   const preNegRegex =
-    /(?:^|\s|[.,;?!])(?:no|not|denies|denied|without|rule\s+out|rules\s+out|free\s+of|negative\s+for|नहीं|ना|नाही|न|nahi|nahin|bina)\s+(?:any\s+)?$/iu;
+    /(?:^|\s|[.,;?!])(?:no|not|denies|denied|without|rule\s+out|rules\s+out|free\s+of|negative\s+for|नहीं|ना|नाही|न|nahi|nahin|bina)(?:\s+any)?(?:\s+|$)$/iu;
   if (preNegRegex.test(relevantPre.trim())) {
     return true;
   }
@@ -698,8 +698,9 @@ export function isMatchNegated(text: string, start: number, end: number): boolea
   const relevantPost = postBoundaryIndex !== -1 ? postWindow.slice(0, postBoundaryIndex) : postWindow;
 
   // Immediate negation pattern: must be within the first 2-3 words of the symptom
+  // Also handles verb inflection remnants like "त नाही", "णे नाही", "ता नाही" when a stem like "दुख" matched
   const postNegRegex =
-    /^\s*(?:भी\s+|तो\s+|पण\s+|ही\s+|बिल्कुल\s+)?(?:नाही|नाहीत|नसून|होत\s*नाही|येत\s*नाही|येत\s*नाहीत|दुखत\s*नाही|जाणवत\s*नाही|नाहीये|नहीं\s*है|नहीं|न\s*हो|न\s*है|भी\s*नहीं|nahi\s*hai|nahi|nahin|nhi|not\s+present|absent|negative|denied)(?:$|\s|[.,;?!])/u;
+    /^\s*(?:[तने|ता|ते|णे]\s+)?(?:भी\s+|तो\s+|पण\s+|ही\s+|बिल्कुल\s+)?(?:नाही|नाहीत|नसून|होत\s*नाही|येत\s*नाही|येत\s*नाहीत|दुखत\s*नाही|जाणवत\s*नाही|नाहीये|नहीं\s*है|नहीं|न\s*हो|न\s*है|भी\s*नहीं|nahi\s*hai|nahi|nahin|nhi|not\s+present|absent|negative|denied)(?:$|\s|[.,;?!])/u;
   if (postNegRegex.test(relevantPost)) {
     return true;
   }
