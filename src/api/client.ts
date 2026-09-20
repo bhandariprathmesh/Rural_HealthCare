@@ -1504,23 +1504,14 @@ export async function approvePatientConsent(consentId: string): Promise<any> {
 
 export interface BookAppointmentPayload {
   patientId: string
-
   doctorId: string
-
   facilityId?: string
-
   scheduledDate: string
-
   timeSlot?: string
-
   reason?: string
-
   notes?: string
-
   priority?: "ROUTINE" | "URGENT" | "HIGH_RISK"
-
   source?: "PATIENT" | "ASHA" | "REFERRAL"
-
   bookedByWorkerId?: string
 }
 
@@ -1531,7 +1522,6 @@ export async function bookAppointment(
     "/appointments",
     {
       method: "POST",
-
       body: JSON.stringify(payload),
     },
   )
@@ -1541,17 +1531,12 @@ export async function bookAppointment(
 
 export async function getDoctorAppointments(
   doctorId: string,
-
   date?: string,
-
   status?: string,
 ): Promise<any[]> {
   const params = new URLSearchParams()
-
   if (date) params.set("date", date)
-
   if (status) params.set("status", status)
-
   const query = params.toString() ? `?${params.toString()}` : ""
 
   const res = await request<ApiResponse<{ appointments: any[] }>>(
@@ -1573,11 +1558,9 @@ export async function getPatientAppointments(
 
 export async function getFacilityAppointments(
   facilityId: string,
-
   date?: string,
 ): Promise<any[]> {
   const query = date ? `?date=${encodeURIComponent(date)}` : ""
-
   const res = await request<ApiResponse<{ appointments: any[] }>>(
     `/appointments/facility/${encodeURIComponent(facilityId)}${query}`,
   ).catch(() => null)
@@ -1587,17 +1570,13 @@ export async function getFacilityAppointments(
 
 export async function updateAppointmentStatus(
   id: string,
-
   status: "CONFIRMED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED",
-
   notes?: string,
 ): Promise<any> {
   const res = await request<ApiResponse<{ appointment: any }>>(
     `/appointments/${encodeURIComponent(id)}/status`,
-
     {
       method: "PATCH",
-
       body: JSON.stringify({ status, notes }),
     },
   )
@@ -1645,4 +1624,56 @@ export async function updateDoctorSlotCapacity(
     },
   )
   return res.data
+}
+
+// ============================================================================
+// Teleconsultation & Real-Time WebRTC Clinical Persistence
+// ============================================================================
+
+export interface TeleconsultationSessionPayload {
+  patientId?: string
+  doctorId?: string
+  role?: 'doctor' | 'worker' | 'patient'
+}
+
+export interface SaveTeleconsultationPayload {
+  sessionId: string
+  patientId: string
+  doctorId?: string
+  doctorName?: string
+  workerId?: string
+  workerName?: string
+  facilityName?: string
+  symptoms?: string[]
+  vitals?: any
+  diagnosis?: string
+  treatment?: string
+  prescription: string[]
+  notes?: string
+  duration?: number
+  networkQuality?: string
+  riskLevel?: string
+  referralStatus?: string
+  followUpDate?: string
+}
+
+export async function createTeleconsultationSession(payload: TeleconsultationSessionPayload): Promise<any> {
+  const res = await request<ApiResponse<any>>('/teleconsultation/sessions', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  return res?.data
+}
+
+export async function saveTeleconsultationRecord(payload: SaveTeleconsultationPayload): Promise<any> {
+  const res = await request<ApiResponse<any>>('/teleconsultation/consultations', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  return res?.data
+}
+
+export async function getActiveTeleconsultationCall(patientId: string): Promise<any> {
+  const res = await request<ApiResponse<any>>(`/teleconsultation/active-call?patientId=${encodeURIComponent(patientId)}`).catch(() => null)
+  return res?.data?.activeCall || null
 }

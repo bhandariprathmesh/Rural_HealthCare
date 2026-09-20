@@ -356,17 +356,37 @@ export async function checkPatientAccess(params: AccessCheckParams): Promise<Acc
 
   // 6. Worker Role (ASHA / Health Worker): Explicit unexpired GRANTED consent only
   if (user.role === 'WORKER') {
-    const workerName = typeof user.fullName === 'string' ? user.fullName : '';
-    const workerCode = user.workerProfile?.workerCode ? String(user.workerProfile.workerCode) : '';
+    const workerName = typeof user.fullName === 'string' ? user.fullName.trim() : '';
+    const cleanWorkerName = workerName.replace(/\s*\([^)]*\)/g, '').trim();
+    let workerCode = user.workerProfile?.workerCode ? String(user.workerProfile.workerCode) : '';
+
+    const workerFilters: any[] = [
+      ...(workerName ? [{ grantedTo: { contains: workerName, mode: 'insensitive' as const } }] : []),
+      ...(cleanWorkerName && cleanWorkerName !== workerName
+        ? [{ grantedTo: { contains: cleanWorkerName, mode: 'insensitive' as const } }]
+        : []),
+      ...(workerCode ? [{ grantedTo: { contains: workerCode, mode: 'insensitive' as const } }] : []),
+    ];
+
+    if (user.workerId || user.id) {
+      const dbWorker = await prisma.worker.findFirst({
+        where: { OR: [{ id: user.workerId }, { userId: user.id }] },
+      });
+      if (dbWorker) {
+        if (dbWorker.workerCode && !workerFilters.some((f) => f.grantedTo?.contains === dbWorker.workerCode)) {
+          workerFilters.push({ grantedTo: { contains: dbWorker.workerCode, mode: 'insensitive' as const } });
+        }
+        if (dbWorker.name && !workerFilters.some((f) => f.grantedTo?.contains === dbWorker.name)) {
+          workerFilters.push({ grantedTo: { contains: dbWorker.name, mode: 'insensitive' as const } });
+        }
+      }
+    }
 
     const validConsents = await prisma.consentArtifact.findMany({
       where: {
         patientId: patient.id,
         status: ConsentStatus.GRANTED,
-        OR: [
-          { grantedTo: { contains: workerName, mode: 'insensitive' as const } },
-          ...(workerCode ? [{ grantedTo: { contains: workerCode, mode: 'insensitive' as const } }] : []),
-        ],
+        OR: workerFilters.length > 0 ? workerFilters : [{ id: 'NO_MATCH' }],
         AND: [
           {
             OR: [{ expiresAt: null }, { expiresAt: { gt: nowIso } }],
@@ -404,7 +424,7 @@ export async function checkPatientAccess(params: AccessCheckParams): Promise<Acc
         patientId: patient.id,
         status: ConsentStatus.TEMPORARY,
         OR: [
-          { grantedTo: { contains: workerName, mode: 'insensitive' as const } },
+          ...(workerFilters.length > 0 ? workerFilters : []),
           { role: { in: ['WORKER', 'Community Health Worker', 'ASHA'] } },
         ],
       },

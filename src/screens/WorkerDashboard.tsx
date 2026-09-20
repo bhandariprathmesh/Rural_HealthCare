@@ -1506,44 +1506,42 @@ export default function WorkerDashboard({
                 </p>
               ) : (
                 highRisk.map((patient: any, index) => (
-                  <button
+                  <div
                     key={patient?.id || `risk-${index}`}
-                    onClick={() =>
-                      navigate(
-                        "patient-profile",
-
-                        patient?.id,
-                      )
-                    }
-                    className="w-full text-left flex items-center gap-3 p-3 bg-red-50 rounded-xl hover:bg-red-100 transition-colors"
+                    className="w-full flex items-center justify-between gap-3 p-3 bg-red-50 rounded-xl hover:bg-red-100/70 transition-colors"
                   >
-                    <div className="w-8 h-8 rounded-full bg-red-100 text-red-700 flex items-center justify-center font-bold text-xs shrink-0">
-                      {String(patient?.name || "Patient")
-
-                        .split(" ")
-
-                        .map((word) => word[0])
-
-                        .join("")
-
-                        .slice(0, 2)
-
-                        .toUpperCase()}
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-900 truncate">
-                        {patient?.name || "Unknown Patient"}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        navigate(
+                          'patient-profile',
+                          patient?.id
+                        )
+                      }
+                      className="flex items-center gap-3 flex-1 min-w-0 text-left cursor-pointer"
+                    >
+                      <div className="w-8 h-8 rounded-full bg-red-100 text-red-700 flex items-center justify-center font-bold text-xs shrink-0">
+                        {String(patient?.name || 'Patient')
+                          .split(' ')
+                          .map((word: string) => word[0])
+                          .join('')
+                          .slice(0, 2)
+                          .toUpperCase()}
                       </div>
 
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <RiskBadge
-                          level={patient?.riskLevel || "high"}
-                          size="sm"
-                        />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-gray-900 truncate">
+                          {patient?.name || 'Unknown Patient'}
+                        </div>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <RiskBadge
+                            level={patient?.riskLevel || 'high'}
+                            size="sm"
+                          />
+                        </div>
                       </div>
-                    </div>
-                  </button>
+                    </button>
+                  </div>
                 ))
               )}
             </div>

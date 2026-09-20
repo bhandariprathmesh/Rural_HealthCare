@@ -1,5 +1,4 @@
-import { useState, useEffect } from "react"
-
+import { useState, useEffect, useRef } from "react"
 import {
   Icon,
   ConsentBadge,
@@ -8,7 +7,6 @@ import {
   PermissionBadge,
   RecordOwnershipBanner,
 } from "../components/shared"
-
 import {
   getCurrentUser,
   getPatientDashboardData,
@@ -20,16 +18,14 @@ import {
   getFacilities,
   getDoctors,
   getDoctorSlots,
+  getActiveTeleconsultationCall,
   type DoctorSlotItem,
 } from "../api/client"
-
 import { syncEngine } from "../services/syncEngine"
 
 interface Props {
-  navigate: (s: string) => void
-
+  navigate: (s: string, patientId?: string, roomId?: string) => void
   onSOS: () => void
-
   loginPhone?: string
 }
 
@@ -454,6 +450,130 @@ export default function PatientMobileDashboard({
 
   const isNewPatient = !!dbUser && history.length === 0
 
+  const [activeDoctorCall, setActiveDoctorCall] = useState<{
+    sessionId: string;
+    patientId: string;
+    doctorName: string;
+    facilityName?: string;
+  } | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  const handleAcceptCall = () => {
+    if (!activeDoctorCall) return;
+    if (activeDoctorCall.doctorName) {
+      localStorage.setItem('last_calling_doctor', activeDoctorCall.doctorName);
+    }
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'consultation:accept',
+          sessionId: activeDoctorCall.sessionId,
+          patientId: pt?.healthId || patientHealthId,
+          role: 'patient',
+        })
+      );
+    }
+    navigate(
+      'teleconsultation',
+      pt?.healthId || patientHealthId,
+      activeDoctorCall.sessionId
+    );
+  };
+
+  const handleRejectCall = () => {
+    if (activeDoctorCall && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'consultation:reject',
+          sessionId: activeDoctorCall.sessionId,
+          patientId: pt?.healthId || patientHealthId,
+          role: 'patient',
+        })
+      );
+    }
+    setActiveDoctorCall(null);
+  };
+
+  useEffect(() => {
+    const healthId = pt?.healthId || dbUser?.patientProfile?.healthId || dbUser?.id || loginPhone;
+    if (!healthId) return;
+
+    let isMounted = true;
+    const checkActiveCall = async () => {
+      try {
+        const call = await getActiveTeleconsultationCall(healthId);
+        if (isMounted) {
+          setActiveDoctorCall(call || null);
+        }
+      } catch {
+        // silent
+      }
+    };
+
+    checkActiveCall();
+    const interval = setInterval(checkActiveCall, 2500);
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.hostname || 'localhost';
+    const ws = new WebSocket(`${protocol}//${host}:5000/teleconsultation`);
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'consultation:incoming' || data.type === 'call:incoming') {
+          const myIds = [
+            pt?.healthId,
+            pt?.id,
+            dbUser?.id,
+            loginPhone,
+          ]
+            .filter(Boolean)
+            .map((id) => String(id).replace(/[^a-zA-Z0-9]/g, '').toLowerCase());
+
+          const incomingIds = [
+            data.patientId,
+            data.patientDbId,
+            data.patientHealthId,
+            data.patientUserId,
+          ]
+            .filter(Boolean)
+            .map((id) => String(id).replace(/[^a-zA-Z0-9]/g, '').toLowerCase());
+
+          const isMatch = myIds.some((myId) => incomingIds.some((incId) => myId === incId));
+          if (isMatch) {
+            setActiveDoctorCall({
+              sessionId: data.sessionId,
+              patientId: data.patientHealthId || data.patientId || healthId,
+              doctorName: data.doctorName,
+              facilityName: data.facilityName,
+            });
+          }
+        } else if (data.type === 'consultation:active') {
+          // Both active -> auto-open if this patient accepted
+          if (activeDoctorCall && activeDoctorCall.sessionId === data.sessionId) {
+            navigate('teleconsultation', pt?.healthId || patientHealthId, data.sessionId);
+          }
+        } else if (
+          data.type === 'call:cancelled' ||
+          data.type === 'call:end' ||
+          data.type === 'consultation:end' ||
+          data.type === 'consultation:missed'
+        ) {
+          setActiveDoctorCall(null);
+        }
+      } catch {}
+    };
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+      try {
+        ws.close();
+      } catch {}
+    };
+  }, [dbUser, pt?.healthId, pt?.id, loginPhone]);
+
   if (loading) {
     return (
       <div className="p-4 max-w-md mx-auto flex items-center justify-center min-h-[60vh]">
@@ -528,6 +648,57 @@ export default function PatientMobileDashboard({
           <button onClick={() => setSosSent(false)}>
             <Icon name="x" size={13} className="text-gray-400" />
           </button>
+        </div>
+      )}
+
+      {/* High-Priority Doctor Call Ringing Alert Banner */}
+      {activeDoctorCall && (
+        <div className="bg-gradient-to-r from-teal-950 via-emerald-950 to-gray-950 border-2 border-emerald-400 rounded-3xl p-4 text-white shadow-2xl space-y-3 animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+              </span>
+              <span className="text-[11px] font-bold tracking-wider uppercase text-emerald-300">
+                Incoming Doctor Video Call
+              </span>
+            </div>
+            <span className="text-[10px] font-mono bg-white/10 px-2 py-0.5 rounded-md text-emerald-200 border border-white/10">
+              Live ABDM Clinic
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3.5">
+            <div className="relative w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-600 flex items-center justify-center text-white shrink-0 shadow-lg">
+              <Icon name="video" size={22} className="animate-bounce" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h4 className="font-bold text-base text-white truncate">
+                {activeDoctorCall.doctorName}
+              </h4>
+              <p className="text-xs text-emerald-200 truncate">
+                {activeDoctorCall.facilityName || 'PHC Medical Officer'} is calling you right now
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <button
+              type="button"
+              onClick={handleRejectCall}
+              className="py-2.5 px-3 bg-red-950/60 hover:bg-red-900 border border-red-500/30 text-red-200 rounded-xl text-xs font-semibold transition-colors cursor-pointer text-center flex items-center justify-center gap-1.5"
+            >
+              <span>❌ Reject</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleAcceptCall}
+              className="py-2.5 px-4 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 active:scale-98 text-gray-950 font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer"
+            >
+              <span>✅ Accept</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -677,6 +848,69 @@ export default function PatientMobileDashboard({
         </div>
       </div>
 
+      {/* Dedicated 1-to-1 Doctor Teleconsultation Card */}
+      <div className="bg-white border border-gray-100 rounded-3xl p-4 shadow-xs space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-100 flex items-center justify-center text-teal-700 shrink-0">
+              <Icon name="video" size={20} />
+            </div>
+            <div>
+              <div className="text-[10px] uppercase font-bold text-teal-700 tracking-wider">
+                1-to-1 Video Consultation
+              </div>
+              <div className="text-sm font-bold text-gray-900 mt-0.5">
+                Doctor Teleconsultation Room
+              </div>
+              <div className="text-[11px] text-gray-500">
+                Direct live consultation & digital prescription delivery
+              </div>
+            </div>
+          </div>
+          <span
+            className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+              activeDoctorCall
+                ? 'bg-emerald-500 text-white animate-pulse'
+                : 'bg-teal-50 text-teal-800 border border-teal-200'
+            }`}
+          >
+            {activeDoctorCall ? 'Doctor Ringing' : 'Waiting for doctor…'}
+          </span>
+        </div>
+
+        <div className="p-3 bg-gradient-to-r from-teal-50 to-emerald-50 border border-teal-100/80 rounded-2xl flex items-center justify-between gap-3">
+          <div className="text-xs text-teal-900 leading-snug">
+            {activeDoctorCall ? (
+              <span>
+                🚨 <strong className="text-emerald-800">{activeDoctorCall.doctorName}</strong> is calling you!
+              </span>
+            ) : (
+              <span className="flex items-center gap-2 text-gray-600">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-500"></span>
+                </span>
+                <span>👉 Waiting for doctor to start consultation…</span>
+              </span>
+            )}
+          </div>
+          {activeDoctorCall ? (
+            <button
+              type="button"
+              onClick={handleAcceptCall}
+              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shrink-0 shadow-xs flex items-center gap-1.5 animate-bounce"
+            >
+              <Icon name="video" size={13} />
+              <span>✅ Accept</span>
+            </button>
+          ) : (
+            <div className="text-[10px] font-mono text-gray-400">
+              Auto-receives
+            </div>
+          )}
+        </div>
+      </div>
+
       <button
         onClick={() => setSosConfirm(true)}
         className="relative w-full py-4 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold rounded-2xl text-base shadow-lg shadow-red-200 transition-all flex items-center justify-center gap-3"
@@ -787,55 +1021,55 @@ export default function PatientMobileDashboard({
         </Card>
       )}
 
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-5 gap-2">
         {[
           {
+            label: 'Video Call',
+            icon: 'video',
+            color: activeDoctorCall
+              ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-400 ring-2 ring-emerald-300 animate-pulse'
+              : 'bg-teal-50 text-teal-700',
+            action: () =>
+              navigate(
+                'teleconsultation',
+                pt?.healthId || patientHealthId,
+                activeDoctorCall?.sessionId || undefined
+              ),
+          },
+          {
             label: "Records",
-
             icon: "clipboard",
-
             color: "bg-brand-50 text-brand-700",
-
             action: () => navigate("patient-profile"),
           },
-
           {
             label: "Medicines",
-
             icon: "pill",
-
             color: "bg-purple-50 text-purple-700",
-
             action: () => setShowMedsModal(true),
           },
-
           {
             label: "Consent",
-
             icon: "shield",
-
             color: "bg-green-50 text-green-700",
-
             action: () => navigate("consent"),
           },
-
           {
             label: "Access Log",
-
             icon: "eye",
-
             color: "bg-amber-50 text-amber-700",
-
             action: () => navigate("access-history"),
           },
         ].map((item) => (
           <button
             key={item.label}
             onClick={item.action}
-            className={`flex flex-col items-center gap-1.5 p-3 rounded-2xl ${item.color} hover:opacity-80 transition-opacity`}
+            className={`flex flex-col items-center gap-1.5 p-2.5 rounded-2xl ${item.color} hover:opacity-80 transition-opacity cursor-pointer`}
           >
-            <Icon name={item.icon} size={20} />
-            <span className="text-[10px] font-medium">{item.label}</span>
+            <Icon name={item.icon} size={18} />
+            <span className="text-[10px] font-medium text-center leading-tight">
+              {item.label}
+            </span>
           </button>
         ))}
       </div>
@@ -1141,39 +1375,9 @@ export default function PatientMobileDashboard({
                       <p className="text-sm text-gray-900 font-medium">
                         {entry.diagnosis}
                       </p>
-
-                      {entry.notes && (
-                        <p className="text-xs text-gray-500 mt-1">
-                          {entry.notes}
-                        </p>
-                      )}
                     </div>
 
-                    <div className="px-4 py-3 bg-blue-50/30">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-                          Prescription
-                        </span>
 
-                        <PermissionBadge type="doctor-editable" />
-                      </div>
-
-                      <ul className="space-y-1">
-                        {entry.prescription.map((rx: string) => (
-                          <li
-                            key={rx}
-                            className="flex items-start gap-2 text-xs text-gray-700"
-                          >
-                            <Icon
-                              name="pill"
-                              size={11}
-                              className="text-blue-500 shrink-0 mt-0.5"
-                            />
-                            {rx}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
 
                     {entry.followUp && (
                       <div className="px-4 py-3">

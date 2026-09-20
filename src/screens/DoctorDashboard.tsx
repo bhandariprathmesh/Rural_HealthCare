@@ -39,14 +39,10 @@ interface SOSAlert {
 }
 
 interface Props {
-  navigate: (s: string, patientId?: string) => void
-
+  navigate: (s: string, patientId?: string, roomId?: string) => void
   sosAlerts?: SOSAlert[]
-
   onDismissSOS?: (id: string) => void
-
   onAcknowledgeSOS?: (id: string) => void
-
   onDeclineSOS?: (id: string) => void
 }
 
@@ -80,7 +76,6 @@ const STATUS_OPTIONS: {
     text: "text-amber-800",
     border: "border-amber-300",
   },
-
   {
     value: "offline",
     label: "Off Duty",
@@ -100,28 +95,18 @@ export default function DoctorDashboard({
   onDeclineSOS,
 }: Props) {
   const [patients, setPatients] = useState<any[]>([])
-
   const [referrals, setReferrals] = useState<any[]>([])
-
   const [consultations, setConsultations] = useState<any[]>([])
-
   const [followUps, setFollowUps] = useState<any[]>([])
-
   const [doctorId, setDoctorId] = useState<string>("")
-
   const [search, setSearch] = useState("")
-
   const [quickLookupId, setQuickLookupId] = useState("")
-
   const [myStatus, setMyStatus] = useState<DutyStatus>("available")
-
   const [statusPickerOpen, setStatusPickerOpen] = useState(false)
-
   const [isLive, setIsLive] = useState(false)
-
   const [loading, setLoading] = useState(true)
-
   const [dbUser, setDbUser] = useState<any>(null)
+  const [patientCallStatus, setPatientCallStatus] = useState<Record<string, 'available' | 'ringing' | 'active' | 'missed' | 'offline'>>({})
 
   const [dashboardStats, setDashboardStats] = useState<any>(null)
 
@@ -220,6 +205,39 @@ export default function DoctorDashboard({
       }
     })
   }, [opdAppointments, slotCapacity])
+
+  useEffect(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.hostname || 'localhost';
+    const ws = new WebSocket(`${protocol}//${host}:5000/teleconsultation`);
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'consultation:active' && data.patientId) {
+          setPatientCallStatus((prev) => ({ ...prev, [data.patientId]: 'active' }));
+        } else if (data.type === 'consultation:missed' && data.patientId) {
+          setPatientCallStatus((prev) => ({ ...prev, [data.patientId]: 'missed' }));
+        } else if (data.type === 'consultation:end' && data.sessionId) {
+          setPatientCallStatus((prev) => {
+            const next = { ...prev };
+            for (const k in next) {
+              if (next[k] === 'ringing' || next[k] === 'active') {
+                next[k] = 'available';
+              }
+            }
+            return next;
+          });
+        }
+      } catch {}
+    };
+
+    return () => {
+      try {
+        ws.close();
+      } catch {}
+    };
+  }, []);
 
   useEffect(() => {
     setLoading(true)
@@ -404,8 +422,46 @@ export default function DoctorDashboard({
 
   const doctorProfile = dbUser?.doctorProfile
 
+  const handleStartConsultation = (p: any) => {
+    const pId = p.healthId || p.id;
+    const cleanId = String(pId).replace(/[^a-zA-Z0-9]/g, '').slice(0, 10);
+    const sessionId = `tc-${cleanId}-${Date.now().toString(36)}`;
+
+    setPatientCallStatus((prev) => ({ ...prev, [pId]: 'ringing' }));
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.hostname || 'localhost';
+    const ws = new WebSocket(`${protocol}//${host}:5000/teleconsultation`);
+
+    ws.onopen = () => {
+      ws.send(
+        JSON.stringify({
+          type: 'consultation:start',
+          sessionId,
+          patientId: pId,
+          doctorId: dbUser?.doctorProfile?.id || dbUser?.id || doctorId || 'doc-1',
+          doctorName: dbUser?.doctorProfile?.name || dbUser?.fullName || 'Dr. rushi pansare',
+          facilityName: dbUser?.doctorProfile?.facility?.name || 'PHC Lunkaransar Tele-Clinic',
+          role: 'doctor',
+        })
+      );
+    };
+
+    // 30-second timeout: if no accept, mark as MISSED
+    setTimeout(() => {
+      setPatientCallStatus((prev) => {
+        if (prev[pId] === 'ringing') {
+          return { ...prev, [pId]: 'missed' };
+        }
+        return prev;
+      });
+    }, 30000);
+
+    navigate('teleconsultation', pId, sessionId);
+  };
+
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
+    <div className="p-4 lg:p-6 space-y-6 max-w-7xl mx-auto">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -492,10 +548,11 @@ export default function DoctorDashboard({
             />
           </div>
         </div>
-        <div className="flex items-center gap-2">
+
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => navigate("doctor-sos-inbox")}
-            className="flex items-center gap-1.5 px-3 py-2 bg-red-100 hover:bg-red-200 text-red-800 border border-red-300 rounded-xl text-xs font-bold transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 bg-red-100 hover:bg-red-200 text-red-800 border border-red-300 rounded-xl text-xs font-bold transition-colors cursor-pointer"
           >
             <span className="w-2 h-2 rounded-full bg-red-600 animate-pulse" />
             SOS Inbox
@@ -1283,11 +1340,28 @@ export default function DoctorDashboard({
                           </span>
                         </div>
                       </div>
-                      <Icon
-                        name="chevron_right"
-                        size={16}
-                        className="text-gray-300 group-hover:text-gray-500 shrink-0"
-                      />
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            navigate(
+                              "teleconsultation",
+                              r.patientId || r.patient?.healthId || r.patient?.id,
+                            )
+                          }}
+                          className="px-2.5 py-1.5 bg-teal-50 hover:bg-teal-600 text-teal-700 hover:text-white border border-teal-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                          title="Start Live Teleconsultation"
+                        >
+                          <Icon name="video" size={12} />
+                          <span className="hidden sm:inline">Teleconsult</span>
+                        </button>
+                        <Icon
+                          name="chevron_right"
+                          size={16}
+                          className="text-gray-300 group-hover:text-gray-500 shrink-0"
+                        />
+                      </div>
                     </button>
                   ))
                 )}
@@ -1322,74 +1396,104 @@ export default function DoctorDashboard({
                         : "No patients assigned or consented yet. Request access from New Health Assessment."}
                   </div>
                 ) : (
-                  filteredPatientsList.map((p: any) => (
-                    <div
-                      key={p.id || p.healthId}
-                      className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors"
-                    >
+                  filteredPatientsList.map((p: any) => {
+                    const pId = p.healthId || p.id
+                    const callStatus = patientCallStatus[pId] || 'available'
+
+                    return (
                       <div
-                        className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
-                        onClick={() =>
-                          navigate("doctor-patient-view", p.healthId || p.id)
-                        }
+                        key={p.id || p.healthId}
+                        className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors"
                       >
-                        <div className="w-10 h-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-xs shrink-0">
-                          {String(p.name || "P")
-
-                            .split(" ")
-
-                            .map((w: string) => w[0])
-
-                            .join("")
-
-                            .slice(0, 2)
-
-                            .toUpperCase()}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-sm text-gray-900 truncate">
-                              {p.name}
-                            </span>
-                            <RiskBadge level={p.riskLevel} size="sm" />
-                            <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                              Active Consent
-                            </span>
-                          </div>
-                          <div className="text-xs text-gray-500 truncate mt-0.5">
-                            {p.age} yrs ·{" "}
-                            {p.gender === "F" || p.gender === "Female"
-                              ? "Female"
-                              : "Male"}{" "}
-                            · {p.village || p.district || "Rural Center"} ·{" "}
-                            <span className="font-mono text-[10px] text-gray-400">
-                              {p.healthId || p.id}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            navigate("health-assessment", p.healthId || p.id)
-                          }
-                          className="px-2.5 py-1.5 bg-brand-50 hover:bg-brand-100 text-brand-700 font-semibold rounded-lg text-xs transition-colors cursor-pointer"
-                        >
-                          + Assessment
-                        </button>
-                        <button
-                          type="button"
+                        <div
+                          className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
                           onClick={() =>
                             navigate("doctor-patient-view", p.healthId || p.id)
                           }
-                          className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-lg text-xs transition-colors cursor-pointer"
                         >
-                          View Chart →
-                        </button>
+                          <div className="w-10 h-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-xs shrink-0">
+                            {String(p.name || "P")
+                              .split(" ")
+                              .map((w: string) => w[0])
+                              .join("")
+                              .slice(0, 2)
+                              .toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-semibold text-sm text-gray-900 truncate">
+                                {p.name}
+                              </span>
+                              {callStatus === 'ringing' ? (
+                                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-amber-50 text-amber-700 border border-amber-300 flex items-center gap-1 animate-pulse">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                                  🟡 Ringing (30s)
+                                </span>
+                              ) : callStatus === 'active' ? (
+                                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                  🟢 Active Call
+                                </span>
+                              ) : callStatus === 'missed' ? (
+                                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-red-50 text-red-700 border border-red-200 flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                                  🔴 Missed
+                                </span>
+                              ) : (
+                                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                  🟢 Available
+                                </span>
+                              )}
+                              <RiskBadge level={p.riskLevel} size="sm" />
+                              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                Active Consent
+                              </span>
+                            </div>
+                            <div className="text-xs text-gray-500 truncate mt-0.5">
+                              {p.age} yrs ·{" "}
+                              {p.gender === "F" || p.gender === "Female"
+                                ? "Female"
+                                : "Male"}{" "}
+                              · {p.village || p.district || "Rural Center"} ·{" "}
+                              <span className="font-mono text-[10px] text-gray-400">
+                                {p.healthId || p.id}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => handleStartConsultation(p)}
+                            className="px-3 py-1.5 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-sm hover:shadow active:scale-95"
+                            title="Start 1-to-1 consultation session with this patient"
+                          >
+                            <Icon name="video" size={13} />
+                            <span>👉 Start Consultation</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              navigate("health-assessment", p.healthId || p.id)
+                            }
+                            className="px-2.5 py-1.5 bg-brand-50 hover:bg-brand-100 text-brand-700 font-semibold rounded-lg text-xs transition-colors cursor-pointer"
+                          >
+                            + Assessment
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              navigate("doctor-patient-view", p.healthId || p.id)
+                            }
+                            className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-lg text-xs transition-colors cursor-pointer"
+                          >
+                            View Chart →
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    )
+                  })
                 )}
               </div>
             </Card>

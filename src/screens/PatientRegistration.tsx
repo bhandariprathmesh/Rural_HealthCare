@@ -101,12 +101,10 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
       setError(
         "Patient consent is required to register and create a health record.",
       )
-
       return
     }
 
     setIsSubmitting(true)
-
     let payload: any = null
 
     try {
@@ -124,15 +122,12 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
 
       const parseList = (str: string) => {
         const trimmed = str.trim()
-
         if (!trimmed || trimmed.toLowerCase() === "none") return []
-
         return trimmed
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean)
       }
-
       payload = {
         name: form.name.trim(),
 
