@@ -204,6 +204,19 @@ export async function registerPatient(
       );
     }
 
+    const existingPatientByName = await prisma.patient.findFirst({
+      where: {
+        name: { equals: input.name.trim(), mode: 'insensitive' }
+      }
+    });
+
+    if (existingPatientByName) {
+      throw new AppError(
+        `A patient named '${input.name.trim()}' is already registered with Health ID: ${existingPatientByName.healthId}`,
+        409
+      );
+    }
+
     let finalAbhaAddress: string | null = null;
     let finalAbhaNumber: string | null = null;
 
@@ -524,6 +537,10 @@ export async function registerPatient(
           });
 
           return patient;
+        },
+        {
+          maxWait: 10000,
+          timeout: 20000,
         }
       );
 
@@ -675,9 +692,24 @@ export async function getPatients(
         },
       });
 
+    // Ensure every patient is distinct throughout the application (unique by name and health ID)
+    const seenNames = new Set<string>();
+    const seenHealthIds = new Set<string>();
+    const uniquePatients: typeof patients = [];
+
+    for (const p of patients) {
+      const normName = (p.name || '').trim().toLowerCase();
+      const normHealthId = (p.healthId || '').trim().toUpperCase();
+      if (!seenNames.has(normName) && !seenHealthIds.has(normHealthId)) {
+        seenNames.add(normName);
+        seenHealthIds.add(normHealthId);
+        uniquePatients.push(p);
+      }
+    }
+
     res.status(200).json({
       success: true,
-      data: { patients },
+      data: { patients: uniquePatients },
     });
   } catch (err) {
     next(err);
@@ -757,11 +789,13 @@ export async function getPatientById(
 
     const user = (req as any).user;
     const emergencyToken = (req.headers['x-emergency-token'] || req.headers['emergency-token']) as string | undefined;
+    const requiredScope = (req.query.scope as string) || (req.query.purpose === 'health_assessment' ? 'HEALTH_ASSESSMENT' : 'Basic Information');
 
     const accessResult = await checkPatientAccess({
       user,
       patientIdOrHealthId: id,
       emergencyToken,
+      requiredScope,
     });
 
     const hasAccess = accessResult.hasAccess;
@@ -904,13 +938,20 @@ export async function requestPatientAccess(
     const consentRandomSuffix = Math.floor(1000 + Math.random() * 9000);
     const consentCode = `REQ-2026-${consentRandomSuffix}`;
 
+    let validatedFacilityId: string | null = null;
+    if (user.facilityId) {
+      const f = await prisma.facility.findUnique({ where: { id: user.facilityId } }).catch(() => null);
+      if (f) validatedFacilityId = f.id;
+    }
+
     const consentArtifact = await prisma.consentArtifact.create({
       data: {
         consentCode,
         patientId: patient.id,
-        grantedTo: user.fullName || 'Health Worker',
+        grantedTo: user.fullName || (user.role === 'DOCTOR' ? 'Doctor' : 'Health Worker'),
         role: user.role === 'DOCTOR' ? 'Doctor' : 'Community Health Worker',
         organization: 'RuralCare Primary Health Network',
+        facilityId: validatedFacilityId,
         status: ConsentStatus.TEMPORARY,
         purpose: reason,
         dataScope,

@@ -16,7 +16,7 @@ const router = Router();
 
 router.post('/register', optionalAuth, registerPatient);
 
-router.get('/', getPatients);
+router.get('/', optionalAuth, getPatients);
 
 router.get('/by-phone/:phone', getPatientByPhone);
 

@@ -68,14 +68,25 @@ export interface AIAssessment {
   recommendedAction: string;
   confidence: number;
   generatedAt: string;
+  modelVersion?: string;
+  riskProbabilities?: {
+    low: number;
+    moderate: number;
+    high: number;
+    critical: number;
+  };
+  standardizedSymptomCodes?: string[];
 }
 
 export interface Referral {
   id: string;
+  rawId?: string;
   patientId: string;
   patientName: string;
   fromWorker: string;
   toPHC: string;
+  toDoctorName?: string;
+  toDoctorSpecialty?: string;
   reason: string;
   riskLevel: RiskLevel;
   status: ReferralStatus;

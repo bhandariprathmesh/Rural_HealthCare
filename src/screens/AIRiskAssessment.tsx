@@ -3,7 +3,7 @@ import { AI_ASSESSMENTS, PATIENTS } from '../data';
 import { RiskBadge, Card, AIDisclaimer, Icon } from '../components/shared';
 import { getAiAssessments } from '../api/client';
 
-interface Props { navigate: (s: string) => void; }
+interface Props { navigate: (s: string, id?: string) => void; }
 
 export default function AIRiskAssessment({ navigate }: Props) {
   const [assessments, setAssessments] = useState(AI_ASSESSMENTS);
@@ -24,6 +24,9 @@ export default function AIRiskAssessment({ navigate }: Props) {
             reasoning: a.reasoning,
             recommendedAction: a.recommendedAction,
             confidence: a.confidence || 85,
+            riskProbabilities: a.riskProbabilities || null,
+            modelVersion: a.modelVersion || 'xgboost-v1.0',
+            standardizedSymptomCodes: a.standardizedSymptomCodes || [],
             generatedAt: new Date(a.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
           })));
         }
@@ -97,7 +100,14 @@ export default function AIRiskAssessment({ navigate }: Props) {
       <div className={`rounded-2xl border-2 p-6 ${rc.bg} ${rc.border}`}>
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-2">AI Risk Assessment</div>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-widest">
+                AI Risk Stratification
+              </span>
+              <span className="text-[10px] font-mono px-2 py-0.5 bg-white/80 border border-gray-200 rounded text-gray-600 font-medium">
+                {assessment.modelVersion || 'XGBoost v1.0'}
+              </span>
+            </div>
             <div className="flex items-center gap-3">
               <div className={`w-16 h-16 rounded-2xl ${rc.icon} flex items-center justify-center ring-4 ${rc.ring}`}>
                 <Icon name="alert" size={28} className={rc.text} />
@@ -126,7 +136,43 @@ export default function AIRiskAssessment({ navigate }: Props) {
           </div>
         </div>
 
-        <div className={`mt-5 p-4 rounded-xl bg-white/70 border ${rc.border}`}>
+        {/* XGBoost Class Probabilities Distribution */}
+        {assessment.riskProbabilities && (
+          <div className="mt-4 p-3 bg-white/80 rounded-xl border border-gray-200/70 text-xs">
+            <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center justify-between">
+              <span>XGBoost Multiclass Softmax Probabilities</span>
+              <span className="font-mono text-[9px] text-gray-400">MIETIC / ESI Triage Benchmark</span>
+            </div>
+            <div className="grid grid-cols-4 gap-2 text-center">
+              <div className="p-1.5 rounded-lg bg-emerald-50 border border-emerald-100">
+                <div className="text-[10px] text-emerald-700 font-semibold">Low</div>
+                <div className="text-xs font-bold text-emerald-900">
+                  {((assessment.riskProbabilities.low || 0) * 100).toFixed(1)}%
+                </div>
+              </div>
+              <div className="p-1.5 rounded-lg bg-blue-50 border border-blue-100">
+                <div className="text-[10px] text-blue-700 font-semibold">Moderate</div>
+                <div className="text-xs font-bold text-blue-900">
+                  {((assessment.riskProbabilities.moderate || 0) * 100).toFixed(1)}%
+                </div>
+              </div>
+              <div className="p-1.5 rounded-lg bg-amber-50 border border-amber-100">
+                <div className="text-[10px] text-amber-700 font-semibold">High</div>
+                <div className="text-xs font-bold text-amber-900">
+                  {((assessment.riskProbabilities.high || 0) * 100).toFixed(1)}%
+                </div>
+              </div>
+              <div className="p-1.5 rounded-lg bg-red-50 border border-red-100">
+                <div className="text-[10px] text-red-700 font-semibold">Critical</div>
+                <div className="text-xs font-bold text-red-900">
+                  {((assessment.riskProbabilities.critical || 0) * 100).toFixed(1)}%
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className={`mt-4 p-4 rounded-xl bg-white/70 border ${rc.border}`}>
           <div className="flex items-start gap-2.5">
             <div className={`w-8 h-8 rounded-lg ${rc.icon} flex items-center justify-center shrink-0`}>
               <Icon name="arrow_right" size={16} className={rc.text} />
@@ -222,7 +268,7 @@ export default function AIRiskAssessment({ navigate }: Props) {
       </Card>
 
       <div className="flex flex-col sm:flex-row gap-3">
-        <button onClick={() => navigate('referral')}
+        <button onClick={() => navigate('referral', patient.id || patient.healthId)}
           className="flex-1 py-3.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 text-sm">
           <Icon name="share" size={18} />
           Create Emergency Referral

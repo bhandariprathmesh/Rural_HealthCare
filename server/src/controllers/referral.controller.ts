@@ -23,7 +23,7 @@ const createReferralSchema = z.object({
 });
 
 /**
- * List referrals with optional filtering.
+ * List referrals scoped by the authenticated user's role and identity.
  * GET /api/v1/referrals
  */
 export async function getReferrals(
@@ -32,6 +32,11 @@ export async function getReferrals(
   next: NextFunction
 ): Promise<void> {
   try {
+    const user = (req as any).user;
+    if (!user) {
+      throw new AppError('Authentication required to list referrals.', 401);
+    }
+
     const status =
       typeof req.query.status === 'string'
         ? req.query.status.toUpperCase()
@@ -47,47 +52,62 @@ export async function getReferrals(
         ? req.query.patientId
         : undefined;
 
-    const fromWorkerId =
-      typeof req.query.fromWorkerId === 'string'
-        ? req.query.fromWorkerId
-        : typeof req.query.workerId === 'string'
-          ? req.query.workerId
-          : undefined;
-
-    const fromWorker =
-      typeof req.query.fromWorker === 'string'
-        ? req.query.fromWorker
-        : undefined;
-
     const where: any = {};
 
     if (status && Object.values(ReferralStatus).includes(status as ReferralStatus)) {
       where.status = status as ReferralStatus;
     }
 
-    if (
-      priority &&
-      Object.values(ReferralPriority).includes(priority as ReferralPriority)
-    ) {
+    if (priority && Object.values(ReferralPriority).includes(priority as ReferralPriority)) {
       where.priority = priority as ReferralPriority;
     }
 
-    if (patientId) {
+    // Role-based scoping
+    if (user.role === 'PATIENT') {
+      // Patients see ONLY their own referrals
       where.OR = [
-        { patientId },
-        { patient: { healthId: patientId } },
+        { patient: { userId: user.id } },
+        { patient: { phone: user.phone } },
       ];
-    }
-
-    if (fromWorkerId) {
-      where.fromWorkerId = fromWorkerId;
-    }
-
-    if (fromWorker) {
-      where.fromWorker = {
-        contains: fromWorker,
-        mode: 'insensitive',
-      };
+    } else if (user.role === 'DOCTOR') {
+      // Doctor sees:
+      // 1. Incoming referrals directed to this doctor (toDoctorId)
+      // 2. Incoming referrals directed to this doctor's facility (toFacilityId)
+      // 3. Outgoing referrals created by this doctor (fromWorkerId = user.id)
+      const docFilters: any[] = [
+        ...(user.doctorId ? [{ toDoctorId: user.doctorId }] : []),
+        ...(user.facilityId ? [{ toFacilityId: user.facilityId }] : []),
+        { fromWorkerId: user.id },
+      ];
+      if (patientId) {
+        where.AND = [
+          { OR: [{ patientId }, { patient: { healthId: patientId } }] },
+          { OR: docFilters },
+        ];
+      } else {
+        where.OR = docFilters;
+      }
+    } else if (user.role === 'WORKER') {
+      // Worker sees referrals created by this worker or for their assigned patients
+      const workerFilters: any[] = [
+        { fromWorkerId: user.id },
+        ...(user.workerId ? [{ patient: { healthWorkerId: user.workerId } }] : []),
+      ];
+      if (patientId) {
+        where.AND = [
+          { OR: [{ patientId }, { patient: { healthId: patientId } }] },
+          { OR: workerFilters },
+        ];
+      } else {
+        where.OR = workerFilters;
+      }
+    } else if (user.role === 'ADMIN') {
+      if (patientId) {
+        where.OR = [
+          { patientId },
+          { patient: { healthId: patientId } },
+        ];
+      }
     }
 
     const referrals = await prisma.referral.findMany({
@@ -133,6 +153,7 @@ export async function getReferralById(
   try {
     const rawId = req.params.id;
     const id = Array.isArray(rawId) ? rawId[0] : rawId;
+    const user = (req as any).user;
 
     const referral = await prisma.referral.findFirst({
       where: {
@@ -150,6 +171,14 @@ export async function getReferralById(
 
     if (!referral) {
       throw new AppError(`Referral '${id}' not found`, 404);
+    }
+
+    // Patient role authorization check: cannot view other patients' referrals
+    if (user && user.role === 'PATIENT') {
+      const isOwner = referral.patient.userId === user.id || referral.patient.phone === user.phone;
+      if (!isOwner) {
+        throw new AppError('Access denied. You can only view your own referrals.', 403);
+      }
     }
 
     res.status(200).json({
@@ -171,6 +200,18 @@ export async function createReferral(
   next: NextFunction
 ): Promise<void> {
   try {
+    const user = (req as any).user;
+    if (!user) {
+      throw new AppError('Authentication required to create a referral.', 401);
+    }
+
+    if (user.role === 'PATIENT') {
+      throw new AppError(
+        'Patients cannot create clinical referrals. Referrals must be initiated by an authorized healthcare provider (Doctor or ASHA).',
+        403
+      );
+    }
+
     const input = createReferralSchema.parse(req.body);
 
     const patient = await prisma.patient.findFirst({
@@ -187,6 +228,42 @@ export async function createReferral(
         `Patient '${input.patientId}' not found for referral`,
         404
       );
+    }
+
+    // Resolve Originating Provider (Doctor vs Health Worker)
+    let resolvedWorkerId = user.id;
+    let resolvedWorkerName = user.fullName || '';
+
+    if (user.role === 'DOCTOR') {
+      resolvedWorkerName = user.fullName
+        ? (user.fullName.toLowerCase().startsWith('dr.') ? user.fullName : `Dr. ${user.fullName}`)
+        : 'Doctor';
+    } else if (user.role === 'WORKER') {
+      resolvedWorkerName = user.fullName
+        ? `${user.fullName} (ASHA)`
+        : 'ASHA Health Worker';
+    } else {
+      resolvedWorkerName = input.fromWorker || user.fullName || 'Health Administrator';
+    }
+
+    // Resolve Destination Doctor (if specified)
+    let resolvedToDoctorId: string | null = null;
+    let targetDoctor: any = null;
+
+    if (input.toDoctorId) {
+      targetDoctor = await prisma.doctor.findFirst({
+        where: {
+          OR: [
+            { id: input.toDoctorId },
+            { name: { contains: input.toDoctorId, mode: 'insensitive' } },
+          ],
+        },
+        include: { facility: true },
+      });
+
+      if (targetDoctor) {
+        resolvedToDoctorId = targetDoctor.id;
+      }
     }
 
     // Resolve Destination Facility & PHC Name
@@ -206,15 +283,16 @@ export async function createReferral(
 
       if (facility) {
         resolvedToFacilityId = facility.id;
-        if (!resolvedToPHC) {
-          resolvedToPHC = facility.name;
-        }
+        resolvedToPHC = facility.name;
       } else {
         throw new AppError(
           `Selected destination facility '${input.toFacilityId}' not found`,
           404
         );
       }
+    } else if (targetDoctor?.facility) {
+      resolvedToFacilityId = targetDoctor.facility.id;
+      resolvedToPHC = targetDoctor.facility.name;
     } else if (input.toPHC) {
       const facility = await prisma.facility.findFirst({
         where: {
@@ -227,57 +305,15 @@ export async function createReferral(
       }
     }
 
-    if (!resolvedToPHC) {
+    if (!resolvedToPHC && !resolvedToDoctorId) {
       throw new AppError(
-        'Destination facility or PHC is required for referral',
+        'Destination facility, PHC, or Doctor is required for referral',
         400
       );
     }
 
-    // Resolve Originating Health Worker / ASHA
-    let resolvedWorkerId: string | null = null;
-    let resolvedWorkerName = input.fromWorker || '';
-
-    if (input.fromWorkerId) {
-      const worker = await prisma.worker.findFirst({
-        where: {
-          OR: [
-            { id: input.fromWorkerId },
-            { userId: input.fromWorkerId },
-            { workerCode: input.fromWorkerId },
-          ],
-        },
-        include: { user: true },
-      });
-
-      if (worker) {
-        resolvedWorkerId = worker.userId || worker.user?.id || null;
-        if (!resolvedWorkerName) {
-          resolvedWorkerName = worker.name;
-        }
-      } else {
-        const user = await prisma.user.findUnique({
-          where: { id: input.fromWorkerId },
-        });
-        if (user) {
-          resolvedWorkerId = user.id;
-          if (!resolvedWorkerName) {
-            resolvedWorkerName = user.fullName;
-          }
-        }
-      }
-    }
-
-    if (!resolvedWorkerName) {
-      const defaultWorker = await prisma.worker.findFirst({
-        include: { user: true },
-      });
-      if (defaultWorker) {
-        resolvedWorkerName = defaultWorker.name;
-        resolvedWorkerId = defaultWorker.userId;
-      } else {
-        resolvedWorkerName = 'Meena Kumari (ASHA)';
-      }
+    if (!resolvedToPHC && targetDoctor) {
+      resolvedToPHC = `${targetDoctor.name} (${targetDoctor.specialty || 'Specialist'})`;
     }
 
     // Generate Guaranteed Unique Referral Code
@@ -318,7 +354,7 @@ export async function createReferral(
         fromWorkerId: resolvedWorkerId,
         toPHC: resolvedToPHC,
         toFacilityId: resolvedToFacilityId,
-        toDoctorId: input.toDoctorId || null,
+        toDoctorId: resolvedToDoctorId,
         reason: input.reason,
         riskLevel: resolvedRiskLevel,
         priority: input.priority.toUpperCase() as ReferralPriority,
@@ -334,9 +370,24 @@ export async function createReferral(
       },
     });
 
+    // Write immutable DPDP audit trail for clinical referral dispatch
+    await prisma.auditLog.create({
+      data: {
+        auditCode: `AUD-${Date.now().toString().slice(-6)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+        patientId: patient.id,
+        accessorName: resolvedWorkerName,
+        accessorRole: user.role === 'DOCTOR' ? 'DOCTOR' : 'HEALTH_WORKER',
+        organization: 'RuralCare Primary Health Network',
+        action: 'REFERRAL_CREATED',
+        dataAccessed: ['Clinical Referral', 'Vitals', 'Demographics'],
+        timestamp: new Date().toISOString(),
+        purpose: `Clinical referral dispatched: ${input.reason} -> ${resolvedToPHC}`,
+      },
+    }).catch(() => {});
+
     res.status(201).json({
       success: true,
-      message: 'Referral order created and dispatched to receiving facility.',
+      message: 'Referral order created and dispatched to receiving provider/facility.',
       data: { referral },
     });
   } catch (err) {
@@ -354,6 +405,14 @@ export async function updateReferralStatus(
   next: NextFunction
 ): Promise<void> {
   try {
+    const user = (req as any).user;
+    if (!user) {
+      throw new AppError('Authentication required.', 401);
+    }
+    if (user.role === 'PATIENT') {
+      throw new AppError('Patients cannot update referral status.', 403);
+    }
+
     const rawId = req.params.id;
     const id = Array.isArray(rawId) ? rawId[0] : rawId;
 
@@ -401,8 +460,25 @@ export async function updateReferralStatus(
       },
       include: {
         patient: true,
+        toFacility: true,
+        toDoctor: true,
       },
     });
+
+    // Write audit log entry
+    await prisma.auditLog.create({
+      data: {
+        auditCode: `AUD-${Date.now().toString().slice(-6)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,
+        patientId: existing.patientId,
+        accessorName: user.fullName || 'Attending Provider',
+        accessorRole: user.role === 'DOCTOR' ? 'DOCTOR' : 'HEALTH_WORKER',
+        organization: 'RuralCare Primary Health Network',
+        action: 'REFERRAL_STATUS_UPDATED',
+        dataAccessed: ['Referral Status'],
+        timestamp: new Date().toISOString(),
+        purpose: `Referral ${existing.referralCode} status updated to ${mappedStatus}`,
+      },
+    }).catch(() => {});
 
     res.status(200).json({
       success: true,
@@ -431,6 +507,30 @@ export async function getReferralFacilities(
     res.status(200).json({
       success: true,
       data: { facilities },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * List available doctors/specialists for referral destination selection.
+ * GET /api/v1/referrals/doctors
+ */
+export async function getReferralDoctors(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const doctors = await prisma.doctor.findMany({
+      include: { facility: true },
+      orderBy: [{ isPreferred: 'desc' }, { name: 'asc' }],
+    });
+
+    res.status(200).json({
+      success: true,
+      data: { doctors },
     });
   } catch (err) {
     next(err);

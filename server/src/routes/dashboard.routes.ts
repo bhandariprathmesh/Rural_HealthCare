@@ -5,8 +5,10 @@ import {
   getDoctorDashboard,
   getPatientDashboard,
 } from '../controllers/dashboard.controller.js';
+import { optionalAuth } from '../middleware/auth.js';
 
 const router = Router();
+router.use(optionalAuth);
 
 // GET /api/v1/dashboards/admin
 router.get('/admin', getAdminDashboard);

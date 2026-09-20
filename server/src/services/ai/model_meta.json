@@ -1,0 +1,83 @@
+{
+  "modelVersion": "xgboost-v1.0",
+  "targetClasses": [
+    "LOW",
+    "MODERATE",
+    "HIGH",
+    "CRITICAL"
+  ],
+  "featureNames": [
+    "age",
+    "gender",
+    "temperature",
+    "heart_rate",
+    "systolic_bp",
+    "diastolic_bp",
+    "spo2",
+    "weight_kg",
+    "symptom_count",
+    "sym_fev",
+    "sym_cou",
+    "sym_col",
+    "sym_sob",
+    "sym_cht",
+    "sym_chp",
+    "sym_fat",
+    "sym_diz",
+    "sym_hed",
+    "sym_nau",
+    "sym_abd",
+    "sym_dia",
+    "sym_app",
+    "sym_jnt",
+    "sym_bck",
+    "sym_edm",
+    "sym_rsh",
+    "sym_vis",
+    "sym_snc",
+    "sym_plp",
+    "sym_htn",
+    "sym_glu",
+    "sym_thr",
+    "sym_uri",
+    "sym_bdy"
+  ],
+  "featureCount": 34,
+  "metrics": {
+    "accuracy": 0.9908333333333333,
+    "macroPrecision": 0.993611539275244,
+    "weightedPrecision": 0.9908391387352535,
+    "macroRecall": 0.9938203295152053,
+    "weightedRecall": 0.9908333333333333,
+    "macroF1": 0.9937152676727782,
+    "weightedF1": 0.9908352965903998,
+    "confusionMatrix": [
+      [
+        363,
+        5,
+        0,
+        0
+      ],
+      [
+        6,
+        533,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        261,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        32
+      ]
+    ]
+  },
+  "trainingEngine": "XGBoost 3.x",
+  "objective": "multi:softprob"
+}

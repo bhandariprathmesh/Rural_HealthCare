@@ -63,11 +63,45 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
   const [requestSubmitting, setRequestSubmitting] = useState(false);
   const [requestMsg, setRequestMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Dynamic Patient Switcher State
+  const [patientSearch, setPatientSearch] = useState('');
+  const [patientSearchResults, setPatientSearchResults] = useState<any[]>([]);
+  const [selectedTargetId, setSelectedTargetId] = useState<string | null | undefined>(patientId);
+
+  useEffect(() => {
+    if (patientId) {
+      setSelectedTargetId(patientId);
+    }
+  }, [patientId]);
+
   useEffect(() => {
     getCurrentUser()
       .then(setDbUser)
       .catch(() => {});
   }, []);
+
+  async function handlePatientSearch(q: string) {
+    setPatientSearch(q);
+    if (!q.trim()) {
+      setPatientSearchResults([]);
+      return;
+    }
+    const patients = await getPatients(q.trim()).catch(() => []);
+    const seen = new Set<string>();
+    const unique = (patients || []).filter((p: any) => {
+      const k = (p.name || '').trim().toLowerCase();
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    setPatientSearchResults(unique);
+  }
+
+  function handleSelectPatient(p: any) {
+    setPatientSearch('');
+    setPatientSearchResults([]);
+    setSelectedTargetId(p.healthId || p.id);
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -75,9 +109,9 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
 
     async function loadData() {
       try {
-        let targetId = patientId;
+        let targetId: string | undefined = selectedTargetId || undefined;
 
-        // If no patientId passed, fetch the patient list and pick the first one
+        // If no targetId passed, fetch the patient list and pick the first one
         if (!targetId) {
           const patientList = await getPatients().catch(() => []);
           if (patientList && patientList.length > 0) {
@@ -145,7 +179,7 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
     return () => {
       mounted = false;
     };
-  }, [patientId]);
+  }, [selectedTargetId]);
 
   const latestConsultation = consultations.length > 0 ? consultations[0] : null;
 
@@ -315,6 +349,50 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
             <Icon name="lock" size={12} className="text-amber-600" />
             ACCESS RESTRICTED
           </div>
+        </div>
+
+        {/* Patient Switcher Bar */}
+        <div className="relative">
+          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-2xl px-3.5 py-2.5 shadow-sm focus-within:ring-2 focus-within:ring-brand-400">
+            <Icon name="search" size={15} className="text-gray-400 shrink-0" />
+            <input
+              type="text"
+              value={patientSearch}
+              onChange={(e) => handlePatientSearch(e.target.value)}
+              placeholder="Search and switch patient by Name, Phone, or Health ID..."
+              className="w-full text-xs focus:outline-none bg-transparent font-medium"
+            />
+            {patientSearch && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPatientSearch('');
+                  setPatientSearchResults([]);
+                }}
+                className="text-gray-400 hover:text-gray-600 text-xs px-1"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          {patientSearchResults.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-gray-200 rounded-2xl shadow-xl z-30 max-h-56 overflow-y-auto divide-y divide-gray-100">
+              {patientSearchResults.map((p) => (
+                <button
+                  key={p.id || p.healthId}
+                  type="button"
+                  onClick={() => handleSelectPatient(p)}
+                  className="w-full px-4 py-2.5 text-left hover:bg-brand-50 flex items-center justify-between text-xs transition-colors cursor-pointer"
+                >
+                  <div>
+                    <span className="font-semibold text-gray-900">{p.name}</span>
+                    <span className="text-gray-500 ml-2 font-mono text-[11px]">{p.healthId || p.id}</span>
+                  </div>
+                  <span className="text-gray-400 text-[10px]">{p.age || '--'} yrs · {p.village || p.district || ''}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Minimal Demographic ID Card (Public identifiers only) */}
@@ -552,6 +630,50 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
         </div>
       </div>
 
+      {/* Patient Switcher Bar */}
+      <div className="relative">
+        <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-2xl px-3.5 py-2.5 shadow-sm focus-within:ring-2 focus-within:ring-brand-400">
+          <Icon name="search" size={15} className="text-gray-400 shrink-0" />
+          <input
+            type="text"
+            value={patientSearch}
+            onChange={(e) => handlePatientSearch(e.target.value)}
+            placeholder="Switch patient: Search by Name, Phone, or Health ID..."
+            className="w-full text-xs focus:outline-none bg-transparent font-medium"
+          />
+          {patientSearch && (
+            <button
+              type="button"
+              onClick={() => {
+                setPatientSearch('');
+                setPatientSearchResults([]);
+              }}
+              className="text-gray-400 hover:text-gray-600 text-xs px-1"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+        {patientSearchResults.length > 0 && (
+          <div className="absolute top-full left-0 right-0 mt-1.5 bg-white border border-gray-200 rounded-2xl shadow-xl z-30 max-h-56 overflow-y-auto divide-y divide-gray-100">
+            {patientSearchResults.map((p) => (
+              <button
+                key={p.id || p.healthId}
+                type="button"
+                onClick={() => handleSelectPatient(p)}
+                className="w-full px-4 py-2.5 text-left hover:bg-brand-50 flex items-center justify-between text-xs transition-colors cursor-pointer"
+              >
+                <div>
+                  <span className="font-semibold text-gray-900">{p.name}</span>
+                  <span className="text-gray-500 ml-2 font-mono text-[11px]">{p.healthId || p.id}</span>
+                </div>
+                <span className="text-gray-400 text-[10px]">{p.age || '--'} yrs · {p.village || p.district || ''}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       {saveSuccess && (
         <div className="p-3 bg-green-50 border border-green-200 text-green-800 rounded-xl text-xs flex items-center justify-between">
           <span>✓ {saveSuccess}</span>
@@ -729,7 +851,7 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
                     <div className="text-xs text-red-600 mt-0.5">{activeReferral.reason || 'Referral pending doctor review'}</div>
                     <div className="text-[10px] text-red-500 mt-1">From: {activeReferral.fromWorker || 'ASHA'} → {activeReferral.toPHC || 'PHC'}</div>
                     <div className="flex items-center gap-2 mt-2">
-                      <button onClick={() => navigate('referral')} className="text-xs text-red-700 font-semibold hover:underline">
+                      <button onClick={() => navigate('referral', patient?.id || patient?.healthId)} className="text-xs text-red-700 font-semibold hover:underline">
                         View Referral →
                       </button>
                       {String(activeReferral.status || '').toLowerCase() !== 'completed' && (
@@ -888,7 +1010,7 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
               {[
                 { label: 'Add Diagnosis / Rx', icon: 'clipboard', action: () => setAddingDiagnosis(true), color: 'bg-brand-600 text-white hover:bg-brand-700' },
                 { label: 'Add Treatment Plan', icon: 'pill', action: () => setAddingDiagnosis(true), color: 'bg-purple-600 text-white hover:bg-purple-700' },
-                { label: 'Refer to Specialist / CHC', icon: 'share', action: () => navigate('referral'), color: 'bg-amber-500 text-white hover:bg-amber-600' },
+                { label: 'Refer to Specialist / CHC', icon: 'share', action: () => navigate('referral', patient?.id || patient?.healthId), color: 'bg-amber-500 text-white hover:bg-amber-600' },
                 { label: 'View Longitudinal History', icon: 'history', action: () => setActiveTab('history'), color: 'bg-green-600 text-white hover:bg-green-700' },
               ].map(a => (
                 <button

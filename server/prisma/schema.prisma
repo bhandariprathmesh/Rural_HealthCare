@@ -244,15 +244,29 @@ model AIAssessment {
   patient            Patient       @relation(fields: [patientId], references: [id], onDelete: Cascade)
   riskLevel          RiskLevel
   symptomsConsidered String[]
+  standardizedSymptomCodes String[] @default([])
   abnormalVitals     String[]
   riskFactors        String[]
   reasoning          String
   recommendedAction  String
   confidence         Int
+  riskProbabilities  Json?
   generatedAt        String
-  modelVersion       String        @default("v2.1")
+  modelVersion       String        @default("xgboost-v1.0")
   isDemo             Boolean       @default(false)
   createdAt          DateTime      @default(now())
+}
+
+model Symptom {
+  id            String   @id @default(uuid())
+  code          String   @unique
+  name          String
+  nameHi        String?
+  category      String
+  synonyms      String[]
+  icd10Code     String?
+  defaultWeight Float    @default(1.0)
+  createdAt     DateTime @default(now())
 }
 
 model Referral {

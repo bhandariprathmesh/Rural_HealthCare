@@ -1,65 +1,71 @@
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { RiskLevel } from '@prisma/client';
 import { AppError } from '../middleware/error.js';
 import { checkPatientAccess } from '../services/accessControl.service.js';
+import { xgboostRiskEngine } from '../services/ai/xgboostRiskEngine.js';
+
+const vitalsSchema = z.object({
+  temp: z.union([z.string(), z.number()]).optional(),
+  bp: z.string().optional(),
+  hr: z.union([z.string(), z.number()]).optional(),
+  spo2: z.union([z.string(), z.number()]).optional(),
+  weight: z.union([z.string(), z.number()]).optional(),
+});
 
 const generateAssessmentSchema = z.object({
   patientId: z.string().min(1),
   symptoms: z.array(z.string()),
-  vitals: z.object({
-    temp: z.string(),
-    bp: z.string(),
-    hr: z.string(),
-    spo2: z.string(),
-    weight: z.string()
-  }),
-  obs: z.string().optional()
+  standardizedSymptomCodes: z.array(z.string()).optional(),
+  vitals: vitalsSchema,
+  obs: z.string().optional(),
 });
 
+const predictRiskSchema = z.object({
+  age: z.number().optional(),
+  gender: z.string().optional(),
+  vitals: vitalsSchema,
+  symptoms: z.array(z.string()).default([]),
+  standardizedSymptomCodes: z.array(z.string()).optional(),
+  obs: z.string().optional(),
+});
+
+/**
+ * Real-time XGBoost Risk Inference (without saving).
+ * POST /api/v1/assessments/predict-risk
+ */
+export async function predictRisk(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = predictRiskSchema.parse(req.body);
+    const result = xgboostRiskEngine.predict({
+      age: data.age,
+      gender: data.gender,
+      vitals: data.vitals,
+      symptoms: data.symptoms,
+      standardizedSymptomCodes: data.standardizedSymptomCodes,
+      obs: data.obs,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Generate and persist clinical AI risk assessment with XGBoost and consent verification.
+ * POST /api/v1/assessments/generate
+ */
 export async function generateAssessment(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const data = generateAssessmentSchema.parse(req.body);
-    
-    // Simple rule-based AI mocking for the "Real AI Risk Score"
-    let riskLevel: RiskLevel = 'LOW';
-    let reasoning = 'Patient shows stable vitals and non-severe symptoms. Routine monitoring is sufficient.';
-    let recommendedAction = 'Routine monitoring and rest.';
-    let confidence = 95;
-    const abnormalVitals: string[] = [];
-
-    const temp = parseFloat(data.vitals.temp);
-    const hr = parseFloat(data.vitals.hr);
-    const spo2 = parseFloat(data.vitals.spo2);
-    
-    if (temp < 36 || temp > 37.5) abnormalVitals.push(`Temp: ${data.vitals.temp}°C`);
-    if (hr < 60 || hr > 100) abnormalVitals.push(`HR: ${data.vitals.hr} bpm`);
-    if (spo2 < 95) abnormalVitals.push(`SpO2: ${data.vitals.spo2}%`);
-
-    if (spo2 < 90 || hr > 120) {
-      riskLevel = 'CRITICAL';
-      reasoning = 'Critical abnormalities in vitals (low SpO2 or high HR) detected. Immediate emergency response is required.';
-      recommendedAction = 'Immediate hospital transfer. Administer oxygen if available.';
-      confidence = 98;
-    } else if (spo2 < 95 || (temp > 39) || data.symptoms.includes('Shortness of breath')) {
-      riskLevel = 'HIGH';
-      reasoning = 'High risk due to abnormal vitals and/or severe symptoms. Urgent medical attention needed.';
-      recommendedAction = 'Refer to the nearest PHC immediately for doctor evaluation.';
-      confidence = 92;
-    } else if (abnormalVitals.length > 0 || data.symptoms.length > 2) {
-      riskLevel = 'MODERATE';
-      reasoning = 'Moderate risk based on mild abnormalities or multiple symptoms.';
-      recommendedAction = 'Consult with a doctor via tele-consultation within 24 hours.';
-      confidence = 88;
-    }
-
-    const assessmentCode = `ASMT-${Date.now()}`;
-
-    // Consent-First Authorization Check
     const user = (req as any).user;
     const emergencyToken = (req.headers['x-emergency-token'] || req.headers['emergency-token']) as string | undefined;
 
+    // Consent-First Authorization Check
     const access = await checkPatientAccess({
       user,
       patientIdOrHealthId: data.patientId,
@@ -76,26 +82,68 @@ export async function generateAssessment(req: Request, res: Response, next: Next
 
     const patient = access.patient;
 
+    // Execute XGBoost Clinical Stratification Model
+    const prediction = xgboostRiskEngine.predict({
+      age: patient.age,
+      gender: patient.gender,
+      vitals: data.vitals,
+      symptoms: data.symptoms,
+      standardizedSymptomCodes: data.standardizedSymptomCodes,
+      obs: data.obs,
+    });
+
+    const assessmentCode = `ASMT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+
     const assessment = await prisma.aIAssessment.create({
       data: {
         assessmentCode,
         patientId: patient.id,
-        riskLevel,
+        riskLevel: prediction.riskLevel,
         symptomsConsidered: data.symptoms,
-        abnormalVitals,
-        riskFactors: ['Age', 'Location'], // Mocked
-        reasoning,
-        recommendedAction,
-        confidence,
-        generatedAt: new Date().toLocaleString(),
-      }
+        standardizedSymptomCodes: prediction.standardizedCodes,
+        abnormalVitals: prediction.abnormalVitals,
+        riskFactors: [
+          `Age: ${patient.age}`,
+          ...(patient.chronicConditions || []),
+        ],
+        reasoning: prediction.reasoning,
+        recommendedAction: prediction.recommendedAction,
+        confidence: prediction.confidence,
+        riskProbabilities: prediction.probabilities as any,
+        modelVersion: prediction.modelVersion,
+        generatedAt: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+      },
+      include: {
+        patient: {
+          select: {
+            id: true,
+            healthId: true,
+            name: true,
+            age: true,
+            gender: true,
+            village: true,
+            chronicConditions: true,
+            currentMedications: true,
+          },
+        },
+      },
     });
+
+    // Update patient's current risk level if elevated
+    if (prediction.riskLevel === 'HIGH' || prediction.riskLevel === 'CRITICAL') {
+      await prisma.patient.update({
+        where: { id: patient.id },
+        data: { riskLevel: prediction.riskLevel },
+      }).catch(() => {});
+    }
 
     res.status(201).json({
       success: true,
+      message: `AI Risk Assessment generated via ${prediction.modelVersion}`,
       data: {
-        assessment
-      }
+        assessment,
+        prediction,
+      },
     });
   } catch (err) {
     next(err);

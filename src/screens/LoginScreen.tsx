@@ -560,7 +560,7 @@ export default function LoginScreen({
     try {
       const result =
         await loginUser(
-          loginEmail.trim(),
+          loginEmail.replace(/\s+/g, ''),
           loginPassword,
           selectedRole.toUpperCase()
         );
@@ -624,7 +624,7 @@ export default function LoginScreen({
     try {
       const payload: any = {
         email:
-          regEmail.trim(),
+          regEmail.replace(/\s+/g, ''),
 
         password:
           regPassword,

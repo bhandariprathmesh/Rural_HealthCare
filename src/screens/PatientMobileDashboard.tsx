@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Icon, ConsentBadge, RiskBadge, Card, PermissionBadge, RecordOwnershipBanner } from '../components/shared';
-import { getCurrentUser, getPatientDashboardData } from '../api/client';
+import { getCurrentUser, getPatientDashboardData, getPatientAccessRequests, approvePatientConsent, revokePatientConsent } from '../api/client';
 
 interface Props {
   navigate: (s: string) => void;
@@ -65,6 +65,8 @@ export default function PatientMobileDashboard({
   const [shareToast, setShareToast] = useState<string | null>(null);
   const [expandedConsultation, setExpandedConsultation] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [doctorConsents, setDoctorConsents] = useState<any[]>([]);
+  const [consentActionInProgress, setConsentActionInProgress] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -115,6 +117,17 @@ export default function PatientMobileDashboard({
               }))
             );
           }
+
+          // Fetch doctor consent entries
+          getPatientAccessRequests(healthId)
+            .then((reqs) => {
+              const docConsents = (reqs || []).filter((r: any) =>
+                String(r.role || '').toLowerCase().includes('doctor') ||
+                String(r.role || '').toLowerCase() === 'physician'
+              );
+              setDoctorConsents(docConsents);
+            })
+            .catch(() => {});
         }
       })
       .catch((e) => console.error('Failed to load user', e))
@@ -411,6 +424,107 @@ export default function PatientMobileDashboard({
           </button>
         ))}
       </div>
+
+      {/* Who Has Access — Doctor consent summary */}
+      {doctorConsents.length > 0 && (
+        <Card className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 bg-blue-100 rounded-lg flex items-center justify-center text-blue-700 shrink-0">
+                <Icon name="shield" size={12} />
+              </div>
+              <span className="font-semibold text-sm text-gray-900">Who Has Access</span>
+            </div>
+            <button
+              onClick={() => navigate('patient-profile')}
+              className="text-xs text-brand-600 font-semibold hover:underline cursor-pointer"
+            >
+              Manage →
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            {doctorConsents.slice(0, 3).map((c: any) => {
+              const isPending = c.status === 'TEMPORARY';
+              const isGranted = c.status === 'GRANTED';
+              const isActing = consentActionInProgress === c.id;
+
+              return (
+                <div
+                  key={c.id}
+                  className={`flex items-center justify-between gap-2 p-2.5 rounded-xl border ${
+                    isPending ? 'bg-amber-50 border-amber-200' :
+                    isGranted ? 'bg-emerald-50 border-emerald-100' :
+                    'bg-gray-50 border-gray-200'
+                  }`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold text-gray-900 truncate">{c.grantedTo}</div>
+                    <div className={`text-[10px] font-medium ${isPending ? 'text-amber-700' : isGranted ? 'text-emerald-700' : 'text-gray-500'}`}>
+                      {isPending ? 'Awaiting your approval' : isGranted ? 'Access granted' : 'Revoked'}
+                    </div>
+                  </div>
+                  {isPending && (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        disabled={isActing}
+                        onClick={async () => {
+                          setConsentActionInProgress(c.id);
+                          try {
+                            await approvePatientConsent(c.id);
+                            setDoctorConsents((prev) =>
+                              prev.map((x) => x.id === c.id ? { ...x, status: 'GRANTED' } : x)
+                            );
+                          } catch {
+                            // ignore
+                          } finally {
+                            setConsentActionInProgress(null);
+                          }
+                        }}
+                        className="px-2.5 py-1 bg-emerald-600 text-white text-[10px] font-bold rounded-lg cursor-pointer disabled:opacity-50"
+                      >
+                        {isActing ? '…' : 'Approve'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isActing}
+                        onClick={async () => {
+                          setConsentActionInProgress(c.id);
+                          try {
+                            await revokePatientConsent(c.id, 'Rejected by patient');
+                            setDoctorConsents((prev) =>
+                              prev.map((x) => x.id === c.id ? { ...x, status: 'REVOKED' } : x)
+                            );
+                          } catch {
+                            // ignore
+                          } finally {
+                            setConsentActionInProgress(null);
+                          }
+                        }}
+                        className="px-2.5 py-1 bg-red-50 border border-red-200 text-red-700 text-[10px] font-bold rounded-lg cursor-pointer disabled:opacity-50"
+                      >
+                        {isActing ? '…' : 'Reject'}
+                      </button>
+                    </div>
+                  )}
+                  {isGranted && (
+                    <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full shrink-0">Active</span>
+                  )}
+                </div>
+              );
+            })}
+            {doctorConsents.length > 3 && (
+              <button
+                onClick={() => navigate('patient-profile')}
+                className="w-full text-center text-xs text-brand-600 font-semibold py-1 cursor-pointer hover:underline"
+              >
+                +{doctorConsents.length - 3} more · View all
+              </button>
+            )}
+          </div>
+        </Card>
+      )}
 
       <div className="space-y-3">
         <div className="flex items-center justify-between">

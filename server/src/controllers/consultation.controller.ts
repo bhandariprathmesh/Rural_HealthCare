@@ -193,13 +193,13 @@ export async function createConsultation(req: Request, res: Response, next: Next
         },
       });
 
-      // Synchronize active referral to COMPLETED if referralStatus is completed or referralId provided
-      if (input.referralStatus === 'completed' || input.referralId) {
+      // Synchronize specific active referral to COMPLETED only when referralId is provided
+      if (input.referralId) {
         await tx.referral.updateMany({
           where: {
             patientId: patient.id,
+            OR: [{ id: input.referralId }, { referralCode: input.referralId }],
             status: { in: [ReferralStatus.PENDING, ReferralStatus.ACCEPTED, ReferralStatus.IN_CONSULTATION] },
-            ...(input.referralId ? { OR: [{ id: input.referralId }, { referralCode: input.referralId }] } : {}),
           },
           data: {
             status: ReferralStatus.COMPLETED,

@@ -50,7 +50,7 @@ export function isScopePermitted(grantedScopes: string[], requiredScope?: string
     // Health assessment mapping
     if (
       (normalizedRequired.includes('assessment') || normalizedRequired.includes('ai')) &&
-      (s.includes('assessment') || s.includes('clinical') || s.includes('consult'))
+      (s.includes('assessment') || s.includes('ai') || s.includes('consult') || s.includes('vital') || s.includes('clinical'))
     ) {
       return true;
     }
@@ -240,22 +240,26 @@ export async function checkPatientAccess(params: AccessCheckParams): Promise<Acc
 
   // 5. Doctor Role: Referral OR Granted Consent
   if (user.role === 'DOCTOR') {
-    // 5A. Check active referral
-    const activeReferral = await prisma.referral.findFirst({
-      where: {
-        patientId: patient.id,
-        status: {
-          in: [ReferralStatus.PENDING, ReferralStatus.ACCEPTED, ReferralStatus.IN_CONSULTATION],
-        },
-        OR: [
-          ...(user.doctorId ? [{ toDoctorId: user.doctorId }] : []),
-          ...(user.facilityId ? [{ toFacilityId: user.facilityId }] : []),
-          { toDoctor: { name: { contains: user.fullName || '', mode: 'insensitive' } } },
-          { toPHC: { contains: user.facilityName || '', mode: 'insensitive' } },
-        ],
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    // 5A. Check active referral specifically targeted to this doctor or doctor's facility
+    const referralFilters: any[] = [
+      ...(user.doctorId ? [{ toDoctorId: user.doctorId }] : []),
+      ...(user.facilityId ? [{ toFacilityId: user.facilityId }] : []),
+      ...(user.fullName?.trim() ? [{ toDoctor: { name: { contains: user.fullName.trim(), mode: 'insensitive' } } }] : []),
+      ...(user.facilityName?.trim() ? [{ toPHC: { contains: user.facilityName.trim(), mode: 'insensitive' } }] : []),
+    ];
+
+    const activeReferral = referralFilters.length > 0
+      ? await prisma.referral.findFirst({
+          where: {
+            patientId: patient.id,
+            status: {
+              in: [ReferralStatus.PENDING, ReferralStatus.ACCEPTED, ReferralStatus.IN_CONSULTATION],
+            },
+            OR: referralFilters,
+          },
+          orderBy: { createdAt: 'desc' },
+        })
+      : null;
 
     if (activeReferral) {
       const referralScopes = [
@@ -263,7 +267,6 @@ export async function checkPatientAccess(params: AccessCheckParams): Promise<Acc
         'Consultation History',
         'Clinical Notes',
         'Vitals',
-        'HEALTH_ASSESSMENT',
         'Prescriptions',
         'Referrals',
         'Symptoms',
@@ -287,25 +290,19 @@ export async function checkPatientAccess(params: AccessCheckParams): Promise<Acc
       }
     }
 
-    // 5B. Check unexpired GRANTED ConsentArtifact
-    const validConsent = await prisma.consentArtifact.findFirst({
+    // 5B. Check unexpired GRANTED ConsentArtifact strictly for this authenticated doctor
+    const cleanDocName = (user.fullName || '').replace(/^Dr\.?\s*/i, '').trim();
+    const doctorConsentFilters: any[] = [
+      ...(user.fullName ? [{ grantedTo: { contains: user.fullName, mode: 'insensitive' } }] : []),
+      ...(cleanDocName ? [{ grantedTo: { contains: cleanDocName, mode: 'insensitive' } }] : []),
+      ...(user.facilityId ? [{ facilityId: user.facilityId }] : []),
+    ];
+
+    const validConsents = await prisma.consentArtifact.findMany({
       where: {
         patientId: patient.id,
         status: ConsentStatus.GRANTED,
-        OR: [
-          { grantedTo: { contains: user.fullName || '', mode: 'insensitive' } },
-          { role: { in: ['Doctor', 'DOCTOR', 'Physician', 'Medical Officer'] } },
-          {
-            grantedTo: {
-              in: [
-                user.fullName || '',
-                'RuralCare Clinical Network',
-                'Primary Health Centre',
-                'PHC Staff',
-              ],
-            },
-          },
-        ],
+        OR: doctorConsentFilters.length > 0 ? doctorConsentFilters : [{ id: 'NO_MATCH' }],
         AND: [
           {
             OR: [{ expiresAt: null }, { expiresAt: { gt: nowIso } }],
@@ -315,37 +312,34 @@ export async function checkPatientAccess(params: AccessCheckParams): Promise<Acc
       orderBy: { createdAt: 'desc' },
     });
 
-    if (validConsent) {
-      const scopes = Array.isArray(validConsent.dataScope) ? validConsent.dataScope : [];
-      if (isScopePermitted(scopes, requiredScope)) {
+    if (validConsents.length > 0) {
+      const mergedScopes = Array.from(new Set(validConsents.flatMap((c) => Array.isArray(c.dataScope) ? c.dataScope : [])));
+      if (isScopePermitted(mergedScopes, requiredScope)) {
         return {
           hasAccess: true,
           patient,
-          activeConsent: validConsent,
-          allowedScopes: scopes,
+          activeConsent: validConsents[0],
+          allowedScopes: mergedScopes,
           accessType: 'CONSENT',
         };
       } else {
         return {
           hasAccess: false,
-          reason: `Requested scope '${requiredScope}' is outside the patient's approved consent scope (${scopes.join(', ')})`,
+          reason: `Requested scope '${requiredScope}' is outside the patient's approved consent scope (${mergedScopes.join(', ')})`,
           patient,
-          activeConsent: validConsent,
-          allowedScopes: scopes,
+          activeConsent: validConsents[0],
+          allowedScopes: mergedScopes,
           accessType: 'CONSENT',
         };
       }
     }
 
-    // 5C. Check pending request
+    // 5C. Check pending request specifically for this doctor
     const pendingRequest = await prisma.consentArtifact.findFirst({
       where: {
         patientId: patient.id,
         status: ConsentStatus.TEMPORARY,
-        OR: [
-          { grantedTo: { contains: user.fullName || '', mode: 'insensitive' } },
-          { role: { in: ['Doctor', 'DOCTOR', 'Physician'] } },
-        ],
+        OR: doctorConsentFilters.length > 0 ? doctorConsentFilters : [{ id: 'NO_MATCH' }],
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -365,7 +359,7 @@ export async function checkPatientAccess(params: AccessCheckParams): Promise<Acc
     const workerName = typeof user.fullName === 'string' ? user.fullName : '';
     const workerCode = user.workerProfile?.workerCode ? String(user.workerProfile.workerCode) : '';
 
-    const validConsent = await prisma.consentArtifact.findFirst({
+    const validConsents = await prisma.consentArtifact.findMany({
       where: {
         patientId: patient.id,
         status: ConsentStatus.GRANTED,
@@ -382,23 +376,23 @@ export async function checkPatientAccess(params: AccessCheckParams): Promise<Acc
       orderBy: { createdAt: 'desc' },
     });
 
-    if (validConsent) {
-      const scopes = Array.isArray(validConsent.dataScope) ? validConsent.dataScope : [];
-      if (isScopePermitted(scopes, requiredScope)) {
+    if (validConsents.length > 0) {
+      const mergedScopes = Array.from(new Set(validConsents.flatMap((c) => Array.isArray(c.dataScope) ? c.dataScope : [])));
+      if (isScopePermitted(mergedScopes, requiredScope)) {
         return {
           hasAccess: true,
           patient,
-          activeConsent: validConsent,
-          allowedScopes: scopes,
+          activeConsent: validConsents[0],
+          allowedScopes: mergedScopes,
           accessType: 'CONSENT',
         };
       } else {
         return {
           hasAccess: false,
-          reason: `Requested scope '${requiredScope}' is outside the patient's approved consent scope (${scopes.join(', ')})`,
+          reason: `Requested scope '${requiredScope}' is outside the patient's approved consent scope (${mergedScopes.join(', ')})`,
           patient,
-          activeConsent: validConsent,
-          allowedScopes: scopes,
+          activeConsent: validConsents[0],
+          allowedScopes: mergedScopes,
           accessType: 'CONSENT',
         };
       }

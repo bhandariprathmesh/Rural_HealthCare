@@ -385,13 +385,13 @@ export function SyncBadge({
 }) {
   const config = {
     synced: {
-      label: 'Synced ✓',
+      label: 'Synced',
       bg: 'bg-green-50',
       text: 'text-green-700',
     },
 
     pending: {
-      label: 'Pending ↻',
+      label: 'Pending Sync',
       bg: 'bg-amber-50',
       text: 'text-amber-700',
     },

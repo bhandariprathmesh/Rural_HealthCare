@@ -103,6 +103,17 @@ export default function DoctorDashboard({ navigate, sosAlerts = [], onDismissSOS
   });
   const criticalPatients = patients.filter((p: any) => p.riskLevel === 'critical' || p.riskLevel === 'high');
 
+  const filteredPatientsList = patients.filter((p: any) => {
+    if (!search.trim()) return true;
+    const q = search.trim().toLowerCase();
+    return (
+      (p.name && p.name.toLowerCase().includes(q)) ||
+      (p.healthId && p.healthId.toLowerCase().includes(q)) ||
+      (p.phone && p.phone.includes(q)) ||
+      (p.village && p.village.toLowerCase().includes(q))
+    );
+  });
+
   const doctorName = dbUser?.fullName || 'Doctor';
   const doctorProfile = dbUser?.doctorProfile;
 
@@ -299,6 +310,85 @@ export default function DoctorDashboard({ navigate, sosAlerts = [], onDismissSOS
                   <Icon name="chevron_right" size={16} className="text-gray-300 group-hover:text-gray-500 shrink-0" />
                 </button>
               ))}
+            </div>
+          </Card>
+
+          <Card>
+            <div className="px-4 pt-4">
+              <SectionHeader
+                title="My Patients (View Patients)"
+                sub="Consented and referred patients assigned to your care"
+                action={
+                  <button
+                    onClick={() => navigate('doctor-patient-view')}
+                    className="text-xs text-brand-600 font-semibold hover:underline"
+                  >
+                    Open Patient View →
+                  </button>
+                }
+              />
+            </div>
+            <div className="divide-y divide-gray-50 max-h-72 overflow-y-auto">
+              {filteredPatientsList.length === 0 ? (
+                <div className="p-6 text-center text-gray-400 text-sm">
+                  {loading
+                    ? 'Loading live patients…'
+                    : search
+                    ? `No patients matching "${search}"`
+                    : 'No patients assigned or consented yet. Request access from New Health Assessment.'}
+                </div>
+              ) : (
+                filteredPatientsList.map((p: any) => (
+                  <div
+                    key={p.id || p.healthId}
+                    className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors"
+                  >
+                    <div
+                      className="flex items-center gap-3 flex-1 min-w-0 cursor-pointer"
+                      onClick={() => navigate('doctor-patient-view', p.healthId || p.id)}
+                    >
+                      <div className="w-10 h-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-xs shrink-0">
+                        {String(p.name || 'P')
+                          .split(' ')
+                          .map((w: string) => w[0])
+                          .join('')
+                          .slice(0, 2)
+                          .toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-sm text-gray-900 truncate">
+                            {p.name}
+                          </span>
+                          <RiskBadge level={p.riskLevel} size="sm" />
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Active Consent
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-500 truncate mt-0.5">
+                          {p.age} yrs · {p.gender === 'F' || p.gender === 'Female' ? 'Female' : 'Male'} · {p.village || p.district || 'Rural Center'} · <span className="font-mono text-[10px] text-gray-400">{p.healthId || p.id}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => navigate('health-assessment', p.healthId || p.id)}
+                        className="px-2.5 py-1.5 bg-brand-50 hover:bg-brand-100 text-brand-700 font-semibold rounded-lg text-xs transition-colors cursor-pointer"
+                      >
+                        + Assessment
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => navigate('doctor-patient-view', p.healthId || p.id)}
+                        className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-lg text-xs transition-colors cursor-pointer"
+                      >
+                        View Chart →
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </Card>
 

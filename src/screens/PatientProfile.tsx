@@ -19,6 +19,9 @@ import {
   getDoctors,
   getWorkers,
   requestPatientAccess,
+  getPatientAccessRequests,
+  approvePatientConsent,
+  revokePatientConsent,
 } from '../api/client';
 
 interface Props {
@@ -76,6 +79,10 @@ export default function PatientProfile({
   const [saveLoading, setSaveLoading] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
   const [saveErrorMsg, setSaveErrorMsg] = useState('');
+
+  // Doctor access consents (for Patient view Access tab)
+  const [doctorConsents, setDoctorConsents] = useState<any[]>([]);
+  const [consentActionInProgress, setConsentActionInProgress] = useState<string | null>(null);
 
   // Search state for ASHA / Doctor view
   const [searchQuery, setSearchQuery] = useState('');
@@ -210,6 +217,20 @@ export default function PatientProfile({
               setReferrals(mapReferrals(res.referrals, res.patient));
               setAuditLogs(res.patient.auditEntries || []);
             }
+            // Fetch doctor consent entries for the Access tab
+            getPatientAccessRequests(res.patient.healthId || res.patient.id)
+              .then((reqs) => {
+                if (mounted) {
+                  // Filter to doctor-role entries only
+                  const docConsents = (reqs || []).filter((r: any) =>
+                    String(r.role || '').toLowerCase().includes('doctor') ||
+                    String(r.role || '').toLowerCase() === 'physician' ||
+                    String(r.role || '').toLowerCase() === 'medical officer'
+                  );
+                  setDoctorConsents(docConsents);
+                }
+              })
+              .catch(() => {});
           } else if (userIsPatient && effectiveUser?.patientProfile) {
             if (mounted) {
               setPatient({
@@ -1250,58 +1271,198 @@ export default function PatientProfile({
 
       {/* ACCESS TAB */}
       {activeTab === 'access' && (
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div className="flex items-center gap-2 text-sm text-gray-600 bg-gray-100 rounded-xl px-4 py-3">
             <Icon name="shield" size={14} className="text-brand-600" />
-            Showing real-time access log for <strong>{patient.name}</strong> ·{' '}
+            Access & Consent log for <strong>{patient.name}</strong> ·{' '}
             <span className="font-mono text-xs">{patient.healthId || patient.id}</span>
           </div>
 
-          {auditLogs.length === 0 ? (
-            <Card className="p-10 text-center">
-              <Icon name="eye" size={32} className="text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-600 font-semibold text-sm">No Access Events Recorded</p>
-              <p className="text-xs text-gray-400 mt-1 max-w-sm mx-auto">
-                No healthcare provider has requested or accessed this record yet. All future accesses will be logged with cryptographic timestamps.
-              </p>
-            </Card>
-          ) : (
-            auditLogs.map((entry: any) => (
-              <Card key={entry.id} className="p-4">
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center shrink-0">
-                    <Icon name="eye" size={14} className="text-gray-500" />
-                  </div>
+          {/* ── Doctors with Access ── */}
+          <Card className="p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="w-7 h-7 bg-blue-100 rounded-lg flex items-center justify-center text-blue-700 shrink-0">
+                <Icon name="user" size={14} />
+              </div>
+              <div>
+                <div className="font-semibold text-sm text-gray-900">Doctors with Access</div>
+                <div className="text-[10px] text-gray-500">Manage which doctors can view your protected health records</div>
+              </div>
+            </div>
 
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between">
-                      <div className="font-medium text-sm text-gray-900">{entry.accessorName}</div>
-                      <div className="font-mono text-xs text-gray-400">
-                        {entry.timestamp || (entry.createdAt ? new Date(entry.createdAt).toLocaleString() : '')}
-                      </div>
-                    </div>
+            {doctorConsents.length === 0 ? (
+              <div className="py-6 text-center">
+                <Icon name="shield" size={28} className="text-gray-200 mx-auto mb-2" />
+                <p className="text-xs text-gray-400">No doctors have requested access yet.</p>
+                <p className="text-[10px] text-gray-300 mt-1">Requests from doctors will appear here for you to approve or reject.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {doctorConsents.map((c: any) => {
+                  const isGranted = c.status === 'GRANTED';
+                  const isPending = c.status === 'TEMPORARY';
+                  const isRevoked = c.status === 'REVOKED';
+                  const isActing = consentActionInProgress === c.id;
 
-                    <div className="text-xs text-gray-500">
-                      {entry.accessorRole} · {entry.organization}
-                    </div>
-                    <div className="text-xs text-gray-700 mt-1">{entry.action}</div>
-
-                    {entry.dataAccessed && (
-                      <div className="flex flex-wrap gap-1 mt-1.5">
-                        {(Array.isArray(entry.dataAccessed) ? entry.dataAccessed : [String(entry.dataAccessed)]).map((d: string) => (
-                          <span key={d} className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px]">
-                            {d}
+                  return (
+                    <div
+                      key={c.id}
+                      className={`p-3.5 border rounded-2xl flex items-start justify-between gap-3 flex-wrap ${
+                        isGranted ? 'bg-emerald-50 border-emerald-200' :
+                        isPending ? 'bg-amber-50 border-amber-200' :
+                        'bg-gray-50 border-gray-200 opacity-70'
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-sm text-gray-900">{c.grantedTo}</span>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                            isGranted ? 'bg-emerald-200 text-emerald-900' :
+                            isPending ? 'bg-amber-200 text-amber-900' :
+                            'bg-gray-200 text-gray-700'
+                          }`}>
+                            {isGranted ? 'Granted' : isPending ? 'Pending Approval' : 'Revoked'}
                           </span>
-                        ))}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {c.purpose && <span>{c.purpose}</span>}
+                        </div>
+                        {Array.isArray(c.dataScope) && c.dataScope.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {c.dataScope.map((s: string) => (
+                              <span key={s} className="px-1.5 py-0.5 bg-white border border-gray-200 text-gray-600 rounded text-[10px]">{s}</span>
+                            ))}
+                          </div>
+                        )}
+                        {isGranted && c.expiresAt && (
+                          <div className="text-[10px] text-gray-400 mt-1">
+                            Expires: {new Date(c.expiresAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                          </div>
+                        )}
                       </div>
-                    )}
 
-                    <div className="text-[10px] text-gray-400 mt-1">Purpose: {entry.purpose}</div>
-                  </div>
-                </div>
+                      {/* Actions — only show for patient view */}
+                      {isPatientUser && (
+                        <div className="flex items-center gap-2 shrink-0">
+                          {isPending && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={isActing}
+                                onClick={async () => {
+                                  setConsentActionInProgress(c.id);
+                                  try {
+                                    await approvePatientConsent(c.id);
+                                    setDoctorConsents((prev) =>
+                                      prev.map((x) => x.id === c.id ? { ...x, status: 'GRANTED' } : x)
+                                    );
+                                  } catch (err: any) {
+                                    alert(err?.message || 'Failed to approve');
+                                  } finally {
+                                    setConsentActionInProgress(null);
+                                  }
+                                }}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                {isActing ? '…' : 'Approve'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isActing}
+                                onClick={async () => {
+                                  setConsentActionInProgress(c.id);
+                                  try {
+                                    await revokePatientConsent(c.id, 'Rejected by patient');
+                                    setDoctorConsents((prev) =>
+                                      prev.map((x) => x.id === c.id ? { ...x, status: 'REVOKED' } : x)
+                                    );
+                                  } catch (err: any) {
+                                    alert(err?.message || 'Failed to reject');
+                                  } finally {
+                                    setConsentActionInProgress(null);
+                                  }
+                                }}
+                                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                {isActing ? '…' : 'Reject'}
+                              </button>
+                            </>
+                          )}
+                          {isGranted && (
+                            <button
+                              type="button"
+                              disabled={isActing}
+                              onClick={async () => {
+                                if (!confirm(`Revoke access for ${c.grantedTo}?`)) return;
+                                setConsentActionInProgress(c.id);
+                                try {
+                                  await revokePatientConsent(c.id, 'Revoked by patient');
+                                  setDoctorConsents((prev) =>
+                                    prev.map((x) => x.id === c.id ? { ...x, status: 'REVOKED' } : x)
+                                  );
+                                } catch (err: any) {
+                                  alert(err?.message || 'Failed to revoke');
+                                } finally {
+                                  setConsentActionInProgress(null);
+                                }
+                              }}
+                              className="px-3 py-1.5 bg-gray-100 hover:bg-red-50 text-gray-600 hover:text-red-700 border border-gray-200 text-xs font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {isActing ? '…' : 'Revoke'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+
+          {/* ── Access Audit Log ── */}
+          <div>
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider px-1 mb-2">Access Audit Log</div>
+            {auditLogs.length === 0 ? (
+              <Card className="p-8 text-center">
+                <Icon name="eye" size={32} className="text-gray-300 mx-auto mb-3" />
+                <p className="text-gray-600 font-semibold text-sm">No Access Events Recorded</p>
+                <p className="text-xs text-gray-400 mt-1 max-w-sm mx-auto">
+                  No healthcare provider has requested or accessed this record yet. All future accesses will be logged with cryptographic timestamps.
+                </p>
               </Card>
-            ))
-          )}
+            ) : (
+              <div className="space-y-2">
+                {auditLogs.map((entry: any) => (
+                  <Card key={entry.id} className="p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center shrink-0">
+                        <Icon name="eye" size={14} className="text-gray-500" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <div className="font-medium text-sm text-gray-900">{entry.accessorName}</div>
+                          <div className="font-mono text-xs text-gray-400">
+                            {entry.timestamp || (entry.createdAt ? new Date(entry.createdAt).toLocaleString() : '')}
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-500">{entry.accessorRole} · {entry.organization}</div>
+                        <div className="text-xs text-gray-700 mt-1">{entry.action}</div>
+                        {entry.dataAccessed && (
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {(Array.isArray(entry.dataAccessed) ? entry.dataAccessed : [String(entry.dataAccessed)]).map((d: string) => (
+                              <span key={d} className="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded text-[10px]">{d}</span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="text-[10px] text-gray-400 mt-1">Purpose: {entry.purpose}</div>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

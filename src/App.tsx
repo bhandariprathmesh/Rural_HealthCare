@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Role } from './types';
 import { Icon, OfflineIndicator } from './components/shared';
 import { getCurrentUser, getToken, clearToken, dispatchSosAlert, getActiveSosAlerts, acceptSosAlert, declineSosAlert } from './api/client';
+import { syncEngine } from './services/syncEngine';
 
 import LoginScreen from './screens/LoginScreen';
 import WorkerDashboard from './screens/WorkerDashboard';
@@ -356,6 +357,32 @@ export default function App() {
   const [isOffline, setIsOffline] =
     useState(false);
 
+  const [pendingSync, setPendingSync] =
+    useState(0);
+
+  useEffect(() => {
+    function updatePending() {
+      syncEngine.getPendingCount().then(setPendingSync).catch(() => {});
+    }
+    updatePending();
+    const unsubscribe = syncEngine.subscribe(updatePending);
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  const prevOfflineRef = useRef(isOffline);
+
+  useEffect(() => {
+    syncEngine.setSimulatedOffline(isOffline);
+    if (prevOfflineRef.current && !isOffline) {
+      syncEngine.flushOutbox().catch((err) => {
+        console.warn('Auto flush on reconnect failed:', err);
+      });
+    }
+    prevOfflineRef.current = isOffline;
+  }, [isOffline]);
+
   const [lang, setLang] =
     useState<'en' | 'hi'>('en');
 
@@ -642,9 +669,6 @@ export default function App() {
     setSelectedPatientId(null);
     setSidebarOpen(false);
   }
-
-  const pendingSync =
-    isOffline ? 4 : 0;
 
   if (role === 'login') {
     if (
@@ -1084,6 +1108,7 @@ export default function App() {
               navigate={
                 navigate
               }
+              patientId={selectedPatientId || undefined}
             />
           )}
 
@@ -1102,6 +1127,7 @@ export default function App() {
               navigate={
                 navigate
               }
+              patientId={selectedPatientId || undefined}
             />
           )}
 

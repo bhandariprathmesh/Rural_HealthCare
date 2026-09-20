@@ -5,6 +5,8 @@ import {
   getPatientByHealthId,
   createPatientConsent,
   revokePatientConsent,
+  getPatientAccessRequests,
+  approvePatientConsent,
   getDoctors,
   getWorkers,
 } from '../api/client';
@@ -32,6 +34,8 @@ export default function ConsentManagement({ navigate }: Props) {
   });
   const [doctorsList, setDoctorsList] = useState<any[]>([]);
   const [workersList, setWorkersList] = useState<any[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -45,67 +49,91 @@ export default function ConsentManagement({ navigate }: Props) {
     'Contact Information',
   ];
 
-  useEffect(() => {
-    let mounted = true;
-    setLoading(true);
+  async function loadData() {
+    try {
+      const user = await getCurrentUser().catch(() => null);
+      const pProfile = user?.patientProfile;
 
-    async function loadData() {
-      try {
-        const user = await getCurrentUser().catch(() => null);
-        const pProfile = user?.patientProfile;
+      if (pProfile) {
+        const healthId = pProfile.healthId || pProfile.id;
+        const res = healthId ? await getPatientByHealthId(healthId).catch(() => null) : null;
 
-        if (pProfile) {
-          const healthId = pProfile.healthId || pProfile.id;
-          const res = healthId ? await getPatientByHealthId(healthId).catch(() => null) : null;
-
-          if (mounted) {
-            if (res?.patient) {
-              setPatient(res.patient);
-              // Format consent entries
-              const list = (res.patient.consentEntries || []).map((c: any) => ({
-                id: c.id,
-                consentCode: c.consentCode,
-                grantedTo: c.grantedTo,
-                role: c.role,
-                organization: c.organization,
-                status: (c.status?.toLowerCase() || 'granted') as any,
-                purpose: c.purpose,
-                dataScope: c.dataScope || [],
-                expiresAt: c.expiresAt ? new Date(c.expiresAt).toLocaleDateString() : 'Permanent',
-              }));
-              setConsents(list);
-            } else {
-              setPatient(pProfile);
-              setConsents([]);
-            }
-          }
+        if (res?.patient) {
+          setPatient(res.patient);
+          // Format consent entries
+          const list = (res.patient.consentEntries || []).map((c: any) => ({
+            id: c.id,
+            consentCode: c.consentCode,
+            grantedTo: c.grantedTo,
+            role: c.role,
+            organization: c.organization,
+            status: (c.status?.toLowerCase() || 'granted') as any,
+            purpose: c.purpose,
+            dataScope: c.dataScope || [],
+            expiresAt: c.expiresAt ? new Date(c.expiresAt).toLocaleDateString() : 'Permanent',
+          }));
+          setConsents(list);
+        } else {
+          setPatient(pProfile);
+          setConsents([]);
         }
 
-        // Fetch roster for quick select
-        const docs = await getDoctors().catch(() => []);
-        const wrks = await getWorkers().catch(() => []);
-        if (mounted) {
-          setDoctorsList(docs || []);
-          setWorkersList(wrks || []);
-        }
-      } catch (err) {
-        console.error('Failed to load consents:', err);
-      } finally {
-        if (mounted) setLoading(false);
+        const targetId = pProfile.id || pProfile.healthId;
+        const reqs = targetId ? await getPatientAccessRequests(targetId).catch(() => []) : [];
+        setPendingRequests(reqs || []);
       }
+
+      // Fetch roster for quick select
+      const docs = await getDoctors().catch(() => []);
+      const wrks = await getWorkers().catch(() => []);
+      setDoctorsList(docs || []);
+      setWorkersList(wrks || []);
+    } catch (err) {
+      console.error('Failed to load consents:', err);
+    } finally {
+      setLoading(false);
     }
+  }
 
+  useEffect(() => {
+    setLoading(true);
     loadData();
-
-    return () => {
-      mounted = false;
-    };
   }, []);
 
   function toggleScope(scope: string) {
     setSelectedScope((prev) =>
       prev.includes(scope) ? prev.filter((s) => s !== scope) : [...prev, scope]
     );
+  }
+
+  async function handleApprove(id: string) {
+    setActionLoadingId(id);
+    try {
+      await approvePatientConsent(id);
+      setPendingRequests((prev) => prev.filter((r) => r.id !== id));
+      setActionMsg({ type: 'success', text: 'Access request approved! Healthcare provider now has authorized access.' });
+      setTimeout(() => setActionMsg(null), 4000);
+      loadData();
+    } catch (err: any) {
+      setActionMsg({ type: 'error', text: err?.message || 'Failed to approve consent request.' });
+    } finally {
+      setActionLoadingId(null);
+    }
+  }
+
+  async function handleReject(id: string) {
+    setActionLoadingId(id);
+    try {
+      await revokePatientConsent(id, 'Rejected by patient via consent manager');
+      setPendingRequests((prev) => prev.filter((r) => r.id !== id));
+      setActionMsg({ type: 'success', text: 'Access request rejected. Healthcare provider was denied access.' });
+      setTimeout(() => setActionMsg(null), 4000);
+      loadData();
+    } catch (err: any) {
+      setActionMsg({ type: 'error', text: err?.message || 'Failed to reject consent request.' });
+    } finally {
+      setActionLoadingId(null);
+    }
   }
 
   async function handleRevoke(id: string) {
@@ -274,6 +302,96 @@ export default function ConsentManagement({ navigate }: Props) {
           <strong>ABDM Consent Architecture:</strong> Your Patient Health ID alone never gives anyone access to your records without your permission. Every doctor or health worker requires your explicit consent. You can revoke access anytime with immediate effect.
         </p>
       </div>
+
+      {/* Pending Access Requests from Doctors & Health Workers */}
+      {pendingRequests.length > 0 && (
+        <Card className="p-5 border-2 border-amber-300 bg-amber-50/40 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 bg-amber-100 rounded-xl flex items-center justify-center text-amber-700 shrink-0">
+                <Icon name="lock" size={16} />
+              </div>
+              <div>
+                <h3 className="font-display font-bold text-gray-900 text-sm">
+                  Pending Access Requests ({pendingRequests.length})
+                </h3>
+                <p className="text-[11px] text-gray-500">
+                  Healthcare providers requesting authorization to view your records
+                </p>
+              </div>
+            </div>
+            <span className="px-2.5 py-1 bg-amber-100 text-amber-800 rounded-full text-[10px] font-bold uppercase tracking-wider animate-pulse">
+              Action Required
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {pendingRequests.map((r: any) => {
+              const isActing = actionLoadingId === r.id;
+              return (
+                <div
+                  key={r.id}
+                  className="p-4 bg-white border border-amber-200 rounded-2xl flex items-start justify-between gap-4 flex-wrap shadow-sm"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-sm text-gray-900">{r.grantedTo}</span>
+                      <span className="px-2 py-0.5 bg-purple-50 border border-purple-200 text-purple-700 rounded-md text-[10px] font-semibold">
+                        {r.role || 'Doctor'}
+                      </span>
+                      <span className="font-mono text-[10px] text-gray-400">{r.consentCode}</span>
+                    </div>
+
+                    <div className="text-xs text-gray-600 mt-1 font-medium">
+                      Purpose: {r.purpose || 'Clinical assessment'}
+                    </div>
+
+                    {Array.isArray(r.dataScope) && r.dataScope.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {r.dataScope.map((s: string) => (
+                          <span
+                            key={s}
+                            className="px-2 py-0.5 bg-gray-100 border border-gray-200 text-gray-600 rounded text-[10px]"
+                          >
+                            {s}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {r.expiresAt && (
+                      <div className="text-[10px] text-gray-400 mt-1.5">
+                        Duration until: {new Date(r.expiresAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={isActing}
+                      onClick={() => handleApprove(r.id)}
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm disabled:opacity-50 cursor-pointer flex items-center gap-1"
+                    >
+                      <Icon name="check" size={13} />
+                      {isActing ? 'Authorizing…' : 'Approve Access'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isActing}
+                      onClick={() => handleReject(r.id)}
+                      className="px-3.5 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1"
+                    >
+                      <Icon name="x" size={13} />
+                      {isActing ? 'Declining…' : 'Decline'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
 
       {/* Consents List Card */}
       <Card>

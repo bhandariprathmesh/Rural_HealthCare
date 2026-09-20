@@ -207,54 +207,134 @@ export async function getWorkerDashboard(_req: Request, res: Response, next: Nex
  */
 export async function getDoctorDashboard(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    const user = (req as any).user;
     const requestedDoctorId = typeof req.query.doctorId === 'string' ? req.query.doctorId : undefined;
+    const jwtDoctorId: string | undefined = user?.doctorId;
 
-    const [
-      patients,
-      referrals,
-      sosAlerts,
-      doctors,
-      consultationsCount,
-      recentConsultations,
-      followUpsList,
-      totalPatientsCount,
-      pendingFollowUpsCount,
-      highRiskCount,
-    ] = await Promise.all([
-      prisma.patient.findMany({
-        orderBy: { createdAt: 'desc' },
-        take: 20,
-      }),
-      prisma.referral.findMany({
-        where: { status: { in: ['PENDING', 'ACCEPTED', 'IN_CONSULTATION'] } },
-        orderBy: { createdAt: 'desc' },
-        include: { patient: true },
-      }),
-      prisma.sosAlert.findMany({
-        where: { dismissed: false },
-        orderBy: { createdAt: 'desc' },
-      }),
-      prisma.doctor.findMany({
+    // ── 1. Resolve the authenticated doctor record ──────────────────────────
+    let doctorRecord: any = null;
+
+    if (jwtDoctorId) {
+      // Primary: look up by Doctor.id from JWT
+      doctorRecord = await prisma.doctor.findUnique({
+        where: { id: jwtDoctorId },
         include: { facility: true },
-        orderBy: { isPreferred: 'desc' },
-      }),
-      prisma.consultation.count(),
-      prisma.consultation.findMany({
-        orderBy: { createdAt: 'desc' },
-        include: { patient: true },
-        take: 10,
-      }),
-      prisma.consultation.findMany({
-        where: { followUpDate: { not: null } },
-        include: { patient: true },
-        orderBy: { createdAt: 'desc' },
-        take: 5,
-      }),
-      prisma.patient.count(),
-      prisma.consultation.count({ where: { followUpDate: { not: null } } }),
-      prisma.patient.count({ where: { riskLevel: { in: ['HIGH', 'CRITICAL'] } } }),
-    ]);
+      });
+    }
 
+    if (!doctorRecord && user?.id) {
+      // Fallback: look up by userId
+      doctorRecord = await prisma.doctor.findFirst({
+        where: { userId: user.id },
+        include: { facility: true },
+      });
+    }
+
+    if (!doctorRecord && requestedDoctorId) {
+      // Backward compat: look up by query param
+      doctorRecord = await prisma.doctor.findFirst({
+        where: { OR: [{ id: requestedDoctorId }, { userId: requestedDoctorId }, { hprId: requestedDoctorId }] },
+        include: { facility: true },
+      });
+    }
+
+    const activeDoctorId = doctorRecord?.id;
+    const activeFacilityId = doctorRecord?.facilityId || user?.facilityId;
+
+    // ── 2. Build scoped WHERE clauses ───────────────────────────────────────
+    const referralWhere: any =
+      activeDoctorId || activeFacilityId
+        ? {
+            status: { in: ['PENDING', 'ACCEPTED', 'IN_CONSULTATION'] },
+            OR: [
+              ...(activeDoctorId ? [{ toDoctorId: activeDoctorId }] : []),
+              ...(activeFacilityId ? [{ toFacilityId: activeFacilityId }] : []),
+            ],
+          }
+        : { id: 'NO_MATCH' };
+
+    // Build Doctor matching consent filters
+    const doctorDisplayName = doctorRecord?.name || user?.fullName || '';
+    const cleanDocName = doctorDisplayName.replace(/^Dr\.?\s*/i, '').trim();
+    const nowIso = new Date().toISOString();
+
+    const consentDoctorFilters: any[] = [
+      ...(doctorDisplayName ? [{ grantedTo: { contains: doctorDisplayName, mode: 'insensitive' as const } }] : []),
+      ...(cleanDocName ? [{ grantedTo: { contains: cleanDocName, mode: 'insensitive' as const } }] : []),
+      ...(activeDoctorId ? [{ grantedTo: { contains: activeDoctorId, mode: 'insensitive' as const } }] : []),
+      ...(activeFacilityId ? [{ facilityId: activeFacilityId }] : []),
+    ];
+
+    const activeConsentCondition: any = consentDoctorFilters.length > 0
+      ? {
+          consentEntries: {
+            some: {
+              status: 'GRANTED',
+              OR: consentDoctorFilters,
+              AND: [
+                {
+                  OR: [{ expiresAt: null }, { expiresAt: { gt: nowIso } }],
+                },
+              ],
+            },
+          },
+        }
+      : null;
+
+    const patientOrConditions: any[] = [];
+    if (activeDoctorId) {
+      patientOrConditions.push({ familyDoctorId: activeDoctorId });
+      patientOrConditions.push({ referrals: { some: { toDoctorId: activeDoctorId } } });
+    }
+    if (activeConsentCondition) {
+      patientOrConditions.push(activeConsentCondition);
+    }
+
+    const patientWhere: any = patientOrConditions.length > 0
+      ? { OR: patientOrConditions }
+      : { id: 'NO_MATCH' };
+
+    const consultationWhere: any = patientOrConditions.length > 0
+      ? { patient: { OR: patientOrConditions } }
+      : { id: 'NO_MATCH' };
+
+    // ── 3. Parallel scoped queries ──────────────────────────────────────────
+    const [patients, referrals, sosAlerts, doctors, recentConsultations, followUpsList] =
+      await Promise.all([
+        prisma.patient.findMany({
+          where: patientWhere,
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+        }),
+        prisma.referral.findMany({
+          where: referralWhere,
+          orderBy: { createdAt: 'desc' },
+          include: { patient: true },
+        }),
+        prisma.sosAlert.findMany({
+          where: { dismissed: false },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+        }),
+        prisma.doctor.findMany({
+          include: { facility: true },
+          orderBy: { isPreferred: 'desc' },
+        }),
+        prisma.consultation.findMany({
+          where: consultationWhere,
+          orderBy: { createdAt: 'desc' },
+          include: { patient: true },
+          take: 10,
+        }),
+        prisma.consultation.findMany({
+          where: { ...consultationWhere, followUpDate: { not: null } },
+          include: { patient: true },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+        }),
+      ]);
+
+    // ── 4. Map responses ────────────────────────────────────────────────────
     const roster = doctors.map(d => ({
       id: d.id,
       name: d.name,
@@ -272,30 +352,13 @@ export async function getDoctorDashboard(req: Request, res: Response, next: Next
       riskLevel: (r.riskLevel || 'LOW').toLowerCase(),
     }));
 
-    let primaryDoctor = doctors[0] || null;
-    if (requestedDoctorId) {
-      const specificDoctor = await prisma.doctor.findFirst({
-        where: {
-          OR: [
-            { id: requestedDoctorId },
-            { userId: requestedDoctorId },
-            { hprId: requestedDoctorId },
-          ],
-        },
-        include: { facility: true },
-      });
-      if (specificDoctor) {
-        primaryDoctor = specificDoctor;
-      }
-    }
-
     const mappedConsultations = recentConsultations.map(c => ({
       id: c.id,
       code: c.consultationCode,
-      time: c.time || '09:30 AM',
+      time: c.time || '—',
       patientId: c.patientId,
       name: c.patient?.name || 'Patient',
-      ag: c.patient?.age ? `${c.patient.age}${c.patient.gender?.[0] || 'M'}` : '45M',
+      ag: c.patient?.age ? `${c.patient.age}${c.patient.gender?.[0] || 'M'}` : '—',
       purpose: c.diagnosis || (c.symptoms.length > 0 ? c.symptoms.join(', ') : 'General Consultation'),
       risk: (c.riskLevel || 'LOW').toLowerCase(),
       status: c.diagnosis ? 'Completed' : 'Waiting',
@@ -310,30 +373,38 @@ export async function getDoctorDashboard(req: Request, res: Response, next: Next
       type: f.diagnosis || (f.symptoms.length > 0 ? f.symptoms[0] : 'Clinical follow-up'),
     }));
 
+    // Counts scoped to this doctor
+    const activePatients = patients.length;
+    const pendingReviews = mappedReferrals.filter(r => r.status === 'pending').length;
+    const highRiskCount = patients.filter(p => p.riskLevel === 'HIGH' || p.riskLevel === 'CRITICAL').length;
+    const pendingFollowUps = followUpsList.length;
+
     res.status(200).json({
       success: true,
       data: {
         stats: {
-          activePatients: totalPatientsCount,
-          pendingReviews: referrals.length,
+          activePatients,
+          pendingReviews,
           emergencySos: sosAlerts.length,
-          teleconsultsToday: consultationsCount,
-          highRiskCount: highRiskCount,
-          pendingFollowUps: pendingFollowUpsCount,
+          teleconsultsToday: recentConsultations.length,
+          highRiskCount,
+          pendingFollowUps,
         },
         patients,
         referrals: mappedReferrals,
-        pendingReferrals: mappedReferrals,
+        pendingReferrals: mappedReferrals.filter(r => r.status === 'pending'),
         consultations: mappedConsultations,
         followUps: mappedFollowUps,
-        doctor: primaryDoctor ? {
-          id: primaryDoctor.id,
-          name: primaryDoctor.name,
-          specialty: primaryDoctor.specialty,
-          dutyStatus: primaryDoctor.dutyStatus,
-          hprId: primaryDoctor.hprId,
-          facility: primaryDoctor.facility,
-        } : null,
+        doctor: doctorRecord
+          ? {
+              id: doctorRecord.id,
+              name: doctorRecord.name,
+              specialty: doctorRecord.specialty,
+              dutyStatus: doctorRecord.dutyStatus,
+              hprId: doctorRecord.hprId,
+              facility: doctorRecord.facility,
+            }
+          : null,
         sosAlerts,
         dutyRoster: roster,
       },

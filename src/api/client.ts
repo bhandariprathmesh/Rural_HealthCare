@@ -117,7 +117,10 @@ async function request<T>(
       const detailedMsg = json.errors?.length
         ? `${json.message || 'Validation failed'}: ${json.errors.map((e: any) => `${e.path} (${e.message})`).join(', ')}`
         : json.message || json.errors?.[0]?.message || `Request failed with status ${res.status}`;
-      throw new Error(detailedMsg);
+      const error: any = new Error(detailedMsg);
+      error.status = res.status;
+      error.data = json;
+      throw error;
     }
 
     return json;
@@ -611,22 +614,41 @@ export async function getPatients(
 }
 
 export async function getPatientByHealthId(
-  healthId: string
+  healthId: string,
+  purpose?: string
 ): Promise<any> {
+  const query = purpose ? `?purpose=${encodeURIComponent(purpose)}` : '';
   const res =
     await request<
       ApiResponse<{
         patient: any;
         consultations: any[];
         referrals: any[];
+        hasAccess?: boolean;
+        activeConsent?: any;
+        pendingRequest?: any;
       }>
     >(
       `/patients/${encodeURIComponent(
         healthId
-      )}`
+      )}${query}`
     );
 
   return res.data;
+}
+
+export async function verifyPatientInCloud(
+  healthId: string
+): Promise<{ exists: boolean; patient?: any; error?: string }> {
+  try {
+    const data = await getPatientByHealthId(healthId);
+    if (data?.patient) {
+      return { exists: true, patient: data.patient };
+    }
+    return { exists: false };
+  } catch (err: any) {
+    return { exists: false, error: err.message };
+  }
 }
 
 // ─── Consultations ───────────────────────────────────────────────────────────
@@ -723,6 +745,7 @@ export interface CreateReferralPayload {
   toFacilityId?: string;
   toFacilityName?: string;
   toPHC?: string;
+  toDoctorId?: string;
   reason: string;
   priority?:
     | 'routine'
@@ -765,6 +788,17 @@ export async function getReferralFacilities(): Promise<any[]> {
     >('/referrals/facilities');
 
   return res.data?.facilities || [];
+}
+
+export async function getReferralDoctors(): Promise<any[]> {
+  const res =
+    await request<
+      ApiResponse<{
+        doctors: any[];
+      }>
+    >('/referrals/doctors');
+
+  return res.data?.doctors || [];
 }
 
 export async function getReferralWorkers(): Promise<any[]> {
@@ -869,6 +903,73 @@ export async function getAiAssessments(
     >(`/ai-assessments${query}`);
 
   return res.data?.assessments || [];
+}
+
+// ─── Standardized Symptoms & XGBoost AI ───────────────────────────────────────
+
+export interface StandardizedSymptom {
+  id: string;
+  code: string;
+  name: string;
+  nameHi?: string;
+  category: string;
+  synonyms: string[];
+  icd10Code?: string;
+  defaultWeight: number;
+}
+
+export async function getSymptoms(query?: string): Promise<StandardizedSymptom[]> {
+  const q = query ? `?q=${encodeURIComponent(query.trim())}` : '';
+  const res = await request<ApiResponse<{ symptoms: StandardizedSymptom[] }>>(`/symptoms${q}`);
+  return res.data?.symptoms || [];
+}
+
+export interface RiskPredictionResponse {
+  riskLevel: 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL';
+  confidence: number;
+  probabilities: {
+    low: number;
+    moderate: number;
+    high: number;
+    critical: number;
+  };
+  abnormalVitals: string[];
+  reasoning: string;
+  recommendedAction: string;
+  modelVersion: string;
+  standardizedCodes: string[];
+}
+
+export async function predictRisk(payload: {
+  age?: number;
+  gender?: string;
+  vitals: any;
+  symptoms: string[];
+  standardizedSymptomCodes?: string[];
+  obs?: string;
+}): Promise<RiskPredictionResponse> {
+  const res = await request<ApiResponse<RiskPredictionResponse>>('/assessments/predict-risk', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return res.data!;
+}
+
+export async function generateAiAssessment(payload: {
+  patientId: string;
+  symptoms: string[];
+  standardizedSymptomCodes?: string[];
+  vitals: any;
+  obs?: string;
+}): Promise<any> {
+  const res = await request<ApiResponse<{ assessment: any; prediction: RiskPredictionResponse }>>(
+    '/assessments/generate',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }
+  );
+  return res.data;
 }
 
 // ─── Doctors ─────────────────────────────────────────────────────────────────
