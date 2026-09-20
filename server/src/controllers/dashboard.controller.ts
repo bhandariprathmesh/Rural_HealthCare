@@ -302,9 +302,11 @@ export async function getDoctorDashboard(req: Request, res: Response, next: Next
     const [patients, referrals, sosAlerts, doctors, recentConsultations, followUpsList] =
       await Promise.all([
         prisma.patient.findMany({
-          where: patientWhere,
           orderBy: { createdAt: 'desc' },
-          take: 20,
+          take: 50,
+          include: {
+            healthWorker: true,
+          },
         }),
         prisma.referral.findMany({
           where: referralWhere,

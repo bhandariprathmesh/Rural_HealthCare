@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { Component, type ErrorInfo, type ReactNode } from 'react';
 import type {
   RiskLevel,
   ConsentStatus,
@@ -113,6 +113,30 @@ export function Icon({
 
     phone:
       'M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z',
+
+    video:
+      'M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z',
+
+    video_off:
+      'M16 16v1a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h1m3.5 0H14a2 2 0 012 2v3.5M21 8.618v6.764a1 1 0 01-1.447.894L16 14M3 3l18 18',
+
+    mic:
+      'M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z',
+
+    mic_off:
+      'M1 1l22 22M9 9v3a3 3 0 005.12 2.12M15 9.34V5a3 3 0 00-5.68-1.33M19 11a7 7 0 01-1.2 3.9M5 11a7 7 0 0010.5 5.5M12 18v4m-4 0h8',
+
+    phone_off:
+      'M16 2v4M21 3l-18 18M10.68 13.31a16 16 0 006 6l4.5-4.5a2 2 0 00.5-2v-4a2 2 0 00-2-2h-3M3 6.5A17.5 17.5 0 0017.5 21',
+
+    signal:
+      'M2 20h.01M7 20v-4m5 4v-8m5 4v-12m5 16v-16',
+
+    maximize:
+      'M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3',
+
+    minimize:
+      'M4 14h6m0 0v6m0-6L3 21m17-7h-6m0 0v6m0-6l7 7M10 4v6m0 0H4m6 0L3 3m10 7h6m-6 0V4m0 6l7-7',
   };
 
   const path = paths[name];
@@ -604,6 +628,7 @@ export function SectionHeader({
 export function PatientRow({
   patient,
   onClick,
+  onTeleconsult,
 }: {
   patient: {
     id: string;
@@ -615,6 +640,7 @@ export function PatientRow({
     lastConsultation: string;
   };
   onClick?: () => void;
+  onTeleconsult?: () => void;
 }) {
   const initials = patient.name
     .split(' ')
@@ -624,43 +650,62 @@ export function PatientRow({
     .toUpperCase();
 
   return (
-    <button
+    <div
       onClick={onClick}
-      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors text-left group"
+      className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-gray-50 transition-colors text-left group cursor-pointer"
     >
-      <div className="w-10 h-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-semibold text-sm shrink-0">
-        {initials}
+      <div className="flex items-center gap-3 flex-1 min-w-0">
+        <div className="w-10 h-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-semibold text-sm shrink-0">
+          {initials}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-gray-900 text-sm truncate">
+              {patient.name}
+            </span>
+
+            <RiskBadge
+              level={patient.riskLevel}
+              size="sm"
+            />
+          </div>
+
+          <div className="text-xs text-gray-500 mt-0.5">
+            {patient.age}
+            {patient.gender} · {patient.village} · Last:{' '}
+            {patient.lastConsultation}
+          </div>
+
+          <div className="font-mono text-[10px] text-gray-400">
+            {patient.id}
+          </div>
+        </div>
       </div>
 
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-medium text-gray-900 text-sm truncate">
-            {patient.name}
-          </span>
+      <div className="flex items-center gap-2 shrink-0">
+        {onTeleconsult && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onTeleconsult();
+            }}
+            className="px-2.5 py-1.5 bg-teal-50 hover:bg-teal-600 text-teal-700 hover:text-white border border-teal-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+            title="Start Live Teleconsultation"
+          >
+            <Icon name="video" size={12} />
+            <span className="hidden sm:inline">Teleconsult</span>
+          </button>
+        )}
 
-          <RiskBadge
-            level={patient.riskLevel}
-            size="sm"
-          />
-        </div>
-
-        <div className="text-xs text-gray-500 mt-0.5">
-          {patient.age}
-          {patient.gender} · {patient.village} · Last:{' '}
-          {patient.lastConsultation}
-        </div>
-
-        <div className="font-mono text-[10px] text-gray-400">
-          {patient.id}
-        </div>
+        <Icon
+          name="chevron_right"
+          size={16}
+          className="text-gray-300 group-hover:text-gray-500 transition-colors shrink-0"
+        />
       </div>
-
-      <Icon
-        name="chevron_right"
-        size={16}
-        className="text-gray-300 group-hover:text-gray-500 transition-colors shrink-0"
-      />
-    </button>
+    </div>
   );
 }
 
@@ -1245,4 +1290,68 @@ export function AIDisclaimer() {
       </span>
     </div>
   );
+}
+
+// ─── Error Boundary ────────────────────────────────────────────────────────
+
+interface ErrorBoundaryProps {
+  children: ReactNode;
+  fallback?: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('ErrorBoundary caught error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+      return (
+        <div className="p-6 max-w-2xl mx-auto my-8 bg-white border border-red-200 rounded-3xl text-center space-y-4 shadow-sm">
+          <div className="w-12 h-12 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto">
+            <Icon name="alert" size={24} />
+          </div>
+          <div>
+            <h3 className="text-base font-bold text-gray-900">Unable to load view</h3>
+            <p className="text-xs text-gray-500 mt-1 max-w-md mx-auto">
+              A temporary render error occurred. Please try reloading or selecting the patient again.
+            </p>
+            {this.state.error?.message && (
+              <p className="text-[11px] text-red-600 font-mono mt-2 bg-red-50 py-1.5 px-3 rounded-lg inline-block">
+                {this.state.error.message}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+              window.location.reload();
+            }}
+            className="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+          >
+            Reload Screen
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }

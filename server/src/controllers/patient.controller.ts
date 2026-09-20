@@ -804,14 +804,35 @@ export async function getPatientById(
 
     if (!hasAccess) {
       const sanitizedPatient = {
-        ...patient,
+        id: patient.id,
+        healthId: patient.healthId,
+        abhaNumber: patient.abhaNumber,
+        abhaAddress: patient.abhaAddress,
+        name: patient.name,
+        nameHi: patient.nameHi,
+        age: patient.age,
+        dob: patient.dob,
+        gender: patient.gender,
+        village: patient.village,
+        district: patient.district,
+        state: patient.state,
+        address: patient.address,
+        phone: patient.phone,
+        bloodGroup: null,
+        emergencyContact: null,
         allergies: [],
         chronicConditions: [],
         currentMedications: [],
+        riskLevel: 'LOW' as const,
+        familyDoctor: null,
+        familyDoctorName: null,
+        healthWorker: null,
+        healthWorkerName: null,
         consultations: [],
         referrals: [],
         consentEntries: [],
         auditEntries: [],
+        aiAssessments: [],
         hasAccess: false,
         activeConsent: null,
         pendingRequest: pendingRequest
@@ -1068,6 +1089,21 @@ export async function updatePatient(
     // Scoped Auth check: If caller is a PATIENT, verify ownership
     if (user && user.role === 'PATIENT' && existing.userId && user.id !== existing.userId) {
       throw new AppError('Unauthorized: You can only edit your own profile.', 403);
+    }
+
+    // Scoped Auth check: If caller is a WORKER or DOCTOR, verify consent
+    if (user && (user.role === 'WORKER' || user.role === 'DOCTOR')) {
+      const accessResult = await checkPatientAccess({
+        user,
+        patientIdOrHealthId: existing.id,
+        requiredScope: 'Basic Information',
+      });
+      if (!accessResult.hasAccess) {
+        throw new AppError(
+          accessResult.reason || 'Patient consent required to edit patient profile.',
+          403
+        );
+      }
     }
 
     const {

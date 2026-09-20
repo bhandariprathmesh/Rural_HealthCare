@@ -1237,3 +1237,55 @@ export async function approvePatientConsent(consentId: string): Promise<any> {
   });
   return res.data;
 }
+
+// ============================================================================
+// Teleconsultation & Real-Time WebRTC Clinical Persistence
+// ============================================================================
+
+export interface TeleconsultationSessionPayload {
+  patientId?: string;
+  doctorId?: string;
+  role?: 'doctor' | 'worker' | 'patient';
+}
+
+export interface SaveTeleconsultationPayload {
+  sessionId: string;
+  patientId: string;
+  doctorId?: string;
+  doctorName?: string;
+  workerId?: string;
+  workerName?: string;
+  facilityName?: string;
+  symptoms?: string[];
+  vitals?: any;
+  diagnosis?: string;
+  treatment?: string;
+  prescription: string[];
+  notes?: string;
+  duration?: number;
+  networkQuality?: string;
+  riskLevel?: string;
+  referralStatus?: string;
+  followUpDate?: string;
+}
+
+export async function createTeleconsultationSession(payload: TeleconsultationSessionPayload): Promise<any> {
+  const res = await request<ApiResponse<any>>('/teleconsultation/sessions', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return res?.data;
+}
+
+export async function saveTeleconsultationRecord(payload: SaveTeleconsultationPayload): Promise<any> {
+  const res = await request<ApiResponse<any>>('/teleconsultation/consultations', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return res?.data;
+}
+
+export async function getActiveTeleconsultationCall(patientId: string): Promise<any> {
+  const res = await request<ApiResponse<any>>(`/teleconsultation/active-call?patientId=${encodeURIComponent(patientId)}`).catch(() => null);
+  return res?.data?.activeCall || null;
+}
