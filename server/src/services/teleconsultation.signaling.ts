@@ -1,4 +1,4 @@
-import { Server as HttpServer } from 'http';
+import { Server as HttpServer, IncomingMessage } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { prisma } from '../lib/prisma.js';
 
@@ -131,7 +131,7 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
     }
   };
 
-  wss.on('connection', (ws: WebSocket, req) => {
+  wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
     let currentPeer: SignalingPeer | null = null;
     const clientIp = req.socket.remoteAddress;
 
@@ -551,7 +551,7 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
       }
     });
 
-    ws.on('error', (err) => {
+    ws.on('error', (err: any) => {
       console.error(`[Teleconsultation WS] Socket error (${clientIp}):`, err.message);
       if (currentPeer) {
         cleanUpPeer(currentPeer);

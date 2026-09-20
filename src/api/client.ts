@@ -1,1241 +1,1629 @@
 // ============================================================================
+
 // RuralCare API Client Layer (SIH 26133)
+
 // ============================================================================
 
 export const API_BASE_URL =
-  (import.meta as any).env?.VITE_API_BASE_URL ||
-  'http://localhost:5000/api/v1';
+  (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:5000/api/v1"
 
 export interface ApiResponse<T = any> {
-  success: boolean;
-  message?: string;
-  data?: T;
-  errors?: Array<{ path: string; message: string }>;
+  success: boolean
+
+  message?: string
+
+  data?: T
+
+  errors?: Array<{ path: string; message: string }>
 }
 
 export interface AuthUser {
-  id?: string;
-  email?: string;
-  role?: string;
-  fullName?: string;
-  phone?: string;
+  id?: string
+
+  email?: string
+
+  role?: string
+
+  fullName?: string
+
+  phone?: string
 
   doctorProfile?: {
-    id?: string;
-    name?: string;
-    specialty?: string;
-    qualification?: string;
-    hprId?: string;
-    registrationNumber?: string;
-    registrationCouncil?: string;
-    verificationStatus?: string;
-    facilityId?: string;
+    id?: string
+
+    name?: string
+
+    specialty?: string
+
+    qualification?: string
+
+    hprId?: string
+
+    registrationNumber?: string
+
+    registrationCouncil?: string
+
+    verificationStatus?: string
+
+    facilityId?: string
+
     facility?: {
-      id?: string;
-      name?: string;
-      district?: string;
-      state?: string;
-    };
-  };
+      id?: string
+
+      name?: string
+
+      district?: string
+
+      state?: string
+    }
+  }
 
   workerProfile?: {
-    id?: string;
-    name?: string;
-    workerCode?: string;
-    workerType?: string;
-    village?: string;
-    subCentre?: string;
-    assignedPhc?: string;
-    district?: string;
-    state?: string;
-    status?: string;
-  };
+    id?: string
+
+    name?: string
+
+    workerCode?: string
+
+    workerType?: string
+
+    village?: string
+
+    subCentre?: string
+
+    assignedPhc?: string
+
+    district?: string
+
+    state?: string
+
+    status?: string
+  }
 
   patientProfile?: {
-    id?: string;
-    name?: string;
-    healthId?: string;
-    dob?: string;
-    gender?: string;
-    phone?: string;
-    village?: string;
-    district?: string;
-    state?: string;
-  };
+    id?: string
+
+    name?: string
+
+    healthId?: string
+
+    dob?: string
+
+    gender?: string
+
+    phone?: string
+
+    village?: string
+
+    district?: string
+
+    state?: string
+  }
 }
 
 export function saveToken(token: string) {
-  localStorage.setItem('rc_token', token);
+  localStorage.setItem("rc_token", token)
 }
 
 export function getToken(): string | null {
-  return localStorage.getItem('rc_token');
+  return localStorage.getItem("rc_token")
 }
 
 export function clearToken() {
-  localStorage.removeItem('rc_token');
+  localStorage.removeItem("rc_token")
 }
 
 async function request<T>(
   endpoint: string,
-  options: RequestInit = {}
+
+  options: RequestInit = {},
 ): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
-  const token = getToken();
-  const emergencyToken = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('rc_emergency_token') : null;
+  const url = `${API_BASE_URL}${endpoint}`
+
+  const token = getToken()
+
+  const emergencyToken =
+    typeof sessionStorage !== "undefined"
+      ? sessionStorage.getItem("rc_emergency_token")
+      : null
 
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
+
     ...(token
       ? {
           Authorization: `Bearer ${token}`,
         }
       : {}),
+
     ...(emergencyToken
       ? {
-          'x-emergency-token': emergencyToken,
+          "x-emergency-token": emergencyToken,
         }
       : {}),
-    ...((options.headers as Record<string, string>) || {}),
-  };
+
+    ...(options.headers as Record<string, string> || {}),
+  }
 
   try {
     const res = await fetch(url, {
       ...options,
-      headers,
-    });
 
-    let json: any = {};
+      headers,
+    })
+
+    let json: any = {}
 
     try {
-      json = await res.json();
+      json = await res.json()
     } catch {
-      json = {};
+      json = {}
     }
 
     if (!res.ok) {
       const detailedMsg = json.errors?.length
-        ? `${json.message || 'Validation failed'}: ${json.errors.map((e: any) => `${e.path} (${e.message})`).join(', ')}`
-        : json.message || json.errors?.[0]?.message || `Request failed with status ${res.status}`;
-      const error: any = new Error(detailedMsg);
-      error.status = res.status;
-      error.data = json;
-      throw error;
+        ? `${json.message || "Validation failed"}: ${json.errors.map((e: any) => `${e.path} (${e.message})`).join(", ")}`
+        : json.message ||
+          json.errors?.[0]?.message ||
+          `Request failed with status ${res.status}`
+
+      const error: any = new Error(detailedMsg)
+
+      error.status = res.status
+
+      error.data = json
+
+      throw error
     }
 
-    return json;
+    return json
   } catch (err) {
     if (err instanceof Error) {
-      throw err;
+      throw err
     }
 
     throw new Error(
-      'Network error or server unreachable. Please verify the backend is running.'
-    );
+      "Network error or server unreachable. Please verify the backend is running.",
+    )
   }
 }
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
 export interface RegisterPayload {
-  email: string;
-  password: string;
-  fullName: string;
-  role: 'WORKER' | 'DOCTOR' | 'PATIENT' | 'ADMIN';
+  email: string
 
-  phone?: string;
+  password: string
+
+  fullName: string
+
+  role: "WORKER" | "DOCTOR" | "PATIENT" | "ADMIN"
+
+  phone?: string
 
   // Doctor
-  hprId?: string;
-  specialty?: string;
-  qualification?: string;
-  gender?: string;
-  facility?: string;
-  facilityId?: string;
-  district?: string;
-  state?: string;
+
+  hprId?: string
+
+  specialty?: string
+
+  qualification?: string
+
+  gender?: string
+
+  facility?: string
+
+  facilityId?: string
+
+  district?: string
+
+  state?: string
 
   // Worker
-  workerType?: string;
-  village?: string;
-  subCentre?: string;
-  assignedPhc?: string;
+
+  workerType?: string
+
+  village?: string
+
+  subCentre?: string
+
+  assignedPhc?: string
 
   // Patient
-  dob?: string;
-  bloodGroup?: string;
-  abhaAddress?: string;
-  abhaNumber?: string;
 
-  [key: string]: any;
+  dob?: string
+
+  bloodGroup?: string
+
+  abhaAddress?: string
+
+  abhaNumber?: string
+
+  [key: string]: any
 }
 
 export interface AuthResponse {
-  token: string;
-  user: AuthUser;
+  token: string
+
+  user: AuthUser
 }
 
 export async function registerUser(
-  payload: RegisterPayload
+  payload: RegisterPayload,
 ): Promise<AuthResponse> {
-  const res =
-    await request<ApiResponse<AuthResponse>>(
-      '/auth/register',
-      {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      }
-    );
+  const res = await request<ApiResponse<AuthResponse>>(
+    "/auth/register",
+
+    {
+      method: "POST",
+
+      body: JSON.stringify(payload),
+    },
+  )
 
   if (!res.data?.token) {
     throw new Error(
-      'Registration succeeded but the server did not return an authentication token.'
-    );
+      "Registration succeeded but the server did not return an authentication token.",
+    )
   }
 
-  saveToken(res.data.token);
+  saveToken(res.data.token)
 
-  return res.data;
+  return res.data
 }
 
 export async function loginUser(
   email: string,
+
   password: string,
-  role: string
+
+  role: string,
 ): Promise<AuthResponse> {
-  const res =
-    await request<ApiResponse<AuthResponse>>(
-      '/auth/login',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          email,
-          password,
-          role,
-        }),
-      }
-    );
+  const res = await request<ApiResponse<AuthResponse>>(
+    "/auth/login",
+
+    {
+      method: "POST",
+
+      body: JSON.stringify({
+        email,
+
+        password,
+
+        role,
+      }),
+    },
+  )
 
   if (!res.data?.token) {
     throw new Error(
-      'Login succeeded but the server did not return an authentication token.'
-    );
+      "Login succeeded but the server did not return an authentication token.",
+    )
   }
 
-  saveToken(res.data.token);
+  saveToken(res.data.token)
 
-  return res.data;
+  return res.data
 }
 
 export async function getCurrentUser(): Promise<AuthUser | null> {
-  const token = getToken();
+  const token = getToken()
 
   if (!token) {
-    return null;
+    return null
   }
 
   const res =
-    await request<
-      ApiResponse<{
-        user: AuthUser;
-      }>
-    >('/auth/me');
+    await request<ApiResponse<{
+      user: AuthUser
+    }>>("/auth/me")
 
-  return res.data?.user || null;
+  return res.data?.user || null
 }
 
 // ─── ABHA Services ───────────────────────────────────────────────────────────
 
 export interface AbhaVerificationResult {
-  exists: boolean;
-  verified: boolean;
-  status?: string;
-  abhaAddress?: string;
-  abhaNumber?: string;
-  fullName?: string;
-  gender?: string;
-  dob?: string;
-  isMock?: boolean;
-  message?: string;
+  exists: boolean
+
+  verified: boolean
+
+  status?: string
+
+  abhaAddress?: string
+
+  abhaNumber?: string
+
+  fullName?: string
+
+  gender?: string
+
+  dob?: string
+
+  isMock?: boolean
+
+  message?: string
 }
 
 export async function verifyAbha(
-  abhaAddress: string
+  abhaAddress: string,
 ): Promise<AbhaVerificationResult> {
-  const res =
-    await request<
-      ApiResponse<AbhaVerificationResult>
-    >('/abdm/mock/abha/verify', {
-      method: 'POST',
+  const res = await request<ApiResponse<AbhaVerificationResult>>(
+    "/abdm/mock/abha/verify",
+    {
+      method: "POST",
+
       body: JSON.stringify({
         abhaAddress,
       }),
-    });
+    },
+  )
 
   return (
     res.data || {
       exists: false,
+
       verified: false,
     }
-  );
+  )
 }
 
-export async function getAbhaProfile(
-  identifier: string
-) {
-  const res =
-    await request<ApiResponse>(
-      '/abdm/mock/abha/' +
-        encodeURIComponent(identifier)
-    );
+export async function getAbhaProfile(identifier: string) {
+  const res = await request<ApiResponse>(
+    "/abdm/mock/abha/" + encodeURIComponent(identifier),
+  )
 
-  return res.data;
+  return res.data
 }
 
 // ─── HPR Services ────────────────────────────────────────────────────────────
 
 export interface HprProfessionalResult {
-  id: string;
-  hprId: string;
-  fullName: string;
-  gender: string;
-  professionalType: string;
-  qualification: string;
-  specialties: string[];
-  registrationNumber: string;
-  registrationCouncil: string;
-  state: string;
-  district: string;
-  primaryHfrId?: string;
-  primaryFacilityName?: string;
-  verificationStatus: string;
-  isMock: boolean;
+  id: string
+
+  hprId: string
+
+  fullName: string
+
+  gender: string
+
+  professionalType: string
+
+  qualification: string
+
+  specialties: string[]
+
+  registrationNumber: string
+
+  registrationCouncil: string
+
+  state: string
+
+  district: string
+
+  primaryHfrId?: string
+
+  primaryFacilityName?: string
+
+  verificationStatus: string
+
+  isMock: boolean
 }
 
 export interface GenerateHprPayload {
-  fullName: string;
-  qualification: string;
-  specialties: string[];
-  professionalType?: string;
-  state?: string;
-  district?: string;
-  contactEmail: string;
-  contactPhone?: string;
-  gender?: string;
-  primaryFacilityName?: string;
+  fullName: string
+
+  qualification: string
+
+  specialties: string[]
+
+  professionalType?: string
+
+  state?: string
+
+  district?: string
+
+  contactEmail: string
+
+  contactPhone?: string
+
+  gender?: string
+
+  primaryFacilityName?: string
 }
 
 function createHprNumber(): string {
-  const number =
-    Math.floor(
-      10000 + Math.random() * 90000
-    );
+  const number = Math.floor(10000 + Math.random() * 90000)
 
-  return `HPR-2026-${number}`;
+  return `HPR-2026-${number}`
 }
 
 export async function generateHprId(
-  payload: GenerateHprPayload
+  payload: GenerateHprPayload,
 ): Promise<HprProfessionalResult> {
-  const hprId = createHprNumber();
+  const hprId = createHprNumber()
 
   const body = {
     hprId,
+
     fullName: payload.fullName,
+
     qualification: payload.qualification,
+
     specialties: payload.specialties,
-    professionalType:
-      payload.professionalType || 'Doctor',
-    state:
-      payload.state || 'Rajasthan',
-    district:
-      payload.district || 'Bikaner',
+
+    professionalType: payload.professionalType || "Doctor",
+
+    state: payload.state || "Rajasthan",
+
+    district: payload.district || "Bikaner",
+
     contactEmail: payload.contactEmail,
-    contactPhone:
-      payload.contactPhone,
-    gender:
-      payload.gender || 'Other',
-    primaryFacilityName:
-      payload.primaryFacilityName,
-  };
 
-  const res =
-    await request<
-      ApiResponse<HprProfessionalResult>
-    >('/abdm/mock/hpr/professionals', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
+    contactPhone: payload.contactPhone,
 
-  if (!res.data?.hprId) {
-    throw new Error(
-      'HPR registry did not return an HPR ID.'
-    );
+    gender: payload.gender || "Other",
+
+    primaryFacilityName: payload.primaryFacilityName,
   }
 
-  return res.data;
+  const res = await request<ApiResponse<HprProfessionalResult>>(
+    "/abdm/mock/hpr/professionals",
+    {
+      method: "POST",
+
+      body: JSON.stringify(body),
+    },
+  )
+
+  if (!res.data?.hprId) {
+    throw new Error("HPR registry did not return an HPR ID.")
+  }
+
+  return res.data
 }
 
-export async function verifyHpr(
-  hprId: string
-): Promise<HprProfessionalResult> {
-  const cleanHprId = hprId.trim();
+export async function verifyHpr(hprId: string): Promise<HprProfessionalResult> {
+  const cleanHprId = hprId.trim()
 
   if (!cleanHprId) {
-    throw new Error(
-      'Please enter an HPR ID.'
-    );
+    throw new Error("Please enter an HPR ID.")
   }
 
-  const res =
-    await request<
-      ApiResponse<HprProfessionalResult>
-    >(
-      '/abdm/mock/hpr/professionals/' +
-        encodeURIComponent(cleanHprId)
-    );
+  const res = await request<ApiResponse<HprProfessionalResult>>(
+    "/abdm/mock/hpr/professionals/" + encodeURIComponent(cleanHprId),
+  )
 
   if (!res.data?.hprId) {
-    throw new Error(
-      'HPR ID not found in ABDM HPR Registry.'
-    );
+    throw new Error("HPR ID not found in ABDM HPR Registry.")
   }
 
-  return res.data;
+  return res.data
 }
 
 // ─── Facility Services ───────────────────────────────────────────────────────
 
 export interface FacilityItem {
-  id: string;
-  hfrId: string;
-  facilityName: string;
-  facilityType: string;
-  district: string;
-  state: string;
-  hasEmergency: boolean;
+  id: string
+
+  hfrId: string
+
+  facilityName: string
+
+  facilityType: string
+
+  district: string
+
+  state: string
+
+  hasEmergency: boolean
 }
 
-export async function getFacilities(): Promise<
-  FacilityItem[]
-> {
-  const res =
-    await request<{
-      data: FacilityItem[];
-    }>('/abdm/mock/hfr/facilities');
+export async function getFacilities(): Promise<FacilityItem[]> {
+  const res = await request<{
+    data: FacilityItem[]
+  }>("/abdm/mock/hfr/facilities")
 
-  return res.data || [];
+  return res.data || []
 }
 
 // ─── Patient Registration ────────────────────────────────────────────────────
 
 export interface PatientRegistrationPayload {
-  name: string;
-  nameHi?: string;
-  dob: string;
-  gender:
-    | 'M'
-    | 'F'
-    | 'O'
-    | 'Male'
-    | 'Female'
-    | 'Other';
-  bloodGroup?: string;
-  phone: string;
-  village: string;
-  district: string;
-  state: string;
-  address?: string;
+  name: string
+
+  nameHi?: string
+
+  dob: string
+
+  gender: "M" | "F" | "O" | "Male" | "Female" | "Other"
+
+  bloodGroup?: string
+
+  phone: string
+
+  village: string
+
+  district: string
+
+  state: string
+
+  address?: string
+
   emergencyContact: {
-    name: string;
-    relation: string;
-    phone: string;
-  };
-  allergies?: string[];
-  chronicConditions?: string[];
-  currentMedications?: string[];
-  abhaAddress?: string;
-  healthWorkerName?: string;
+    name: string
+
+    relation: string
+
+    phone: string
+  }
+
+  allergies?: string[]
+
+  chronicConditions?: string[]
+
+  currentMedications?: string[]
+
+  abhaAddress?: string
+
+  healthWorkerName?: string
+
   consent: {
-    granted: boolean;
-    purpose?: string;
-    dataScope?: string[];
-  };
+    granted: boolean
+
+    purpose?: string
+
+    dataScope?: string[]
+  }
 }
 
 export interface PatientRegistrationResult {
   patient: {
-    id: string;
-    healthId: string;
-    name: string;
-    nameHi?: string;
-    dob: string;
-    age: number;
-    gender: string;
-    phone: string;
-    village: string;
-    district: string;
-    state: string;
-    abhaAddress?: string;
-    abhaNumber?: string;
-    abhaSource:
-      | 'existing'
-      | 'mock-created';
-    registeredAt: string;
-    consentStatus: string;
-  };
+    id: string
+
+    healthId: string
+
+    name: string
+
+    nameHi?: string
+
+    dob: string
+
+    age: number
+
+    gender: string
+
+    phone: string
+
+    village: string
+
+    district: string
+
+    state: string
+
+    abhaAddress?: string
+
+    abhaNumber?: string
+
+    abhaSource: "existing" | "mock-created"
+
+    registeredAt: string
+
+    consentStatus: string
+  }
 }
 
 export async function registerPatient(
-  payload: PatientRegistrationPayload
+  payload: PatientRegistrationPayload,
 ): Promise<PatientRegistrationResult> {
-  const res =
-    await request<
-      ApiResponse<PatientRegistrationResult>
-    >('/patients/register', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+  const res = await request<ApiResponse<PatientRegistrationResult>>(
+    "/patients/register",
+    {
+      method: "POST",
 
-  return res.data!;
+      body: JSON.stringify(payload),
+    },
+  )
+
+  return res.data!
 }
 
 // ─── Doctor Registration ─────────────────────────────────────────────────────
 
 export interface DoctorRegistrationPayload {
-  fullName: string;
-  phone: string;
-  pin: string;
-  hprId: string;
-  facilityId: string;
-  specialty?: string;
+  fullName: string
+
+  phone: string
+
+  pin: string
+
+  hprId: string
+
+  facilityId: string
+
+  specialty?: string
 }
 
 export interface DoctorRegistrationResult {
-  token: string;
-  user: AuthUser;
+  token: string
+
+  user: AuthUser
+
   doctor: {
-    id: string;
-    hprId: string;
-    name: string;
-    specialty: string;
-    facilityId: string;
-    facilityName: string;
-    qualification: string;
-    registrationNumber: string;
-    registrationCouncil: string;
-    verificationStatus: string;
-  };
+    id: string
+
+    hprId: string
+
+    name: string
+
+    specialty: string
+
+    facilityId: string
+
+    facilityName: string
+
+    qualification: string
+
+    registrationNumber: string
+
+    registrationCouncil: string
+
+    verificationStatus: string
+  }
 }
 
 export async function registerDoctor(
-  payload: DoctorRegistrationPayload
+  payload: DoctorRegistrationPayload,
 ): Promise<DoctorRegistrationResult> {
-  const res =
-    await request<
-      ApiResponse<DoctorRegistrationResult>
-    >('/doctors/register', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+  const res = await request<ApiResponse<DoctorRegistrationResult>>(
+    "/doctors/register",
+    {
+      method: "POST",
 
-  return res.data!;
+      body: JSON.stringify(payload),
+    },
+  )
+
+  return res.data!
 }
 
 // ─── Worker Registration ─────────────────────────────────────────────────────
 
 export interface WorkerRegistrationPayload {
-  fullName: string;
-  phone: string;
-  pin: string;
-  workerType?:
-    | 'ASHA'
-    | 'ANM'
-    | 'CHO'
-    | 'Health Worker';
-  village: string;
-  subCentre?: string;
-  assignedPhc?: string;
-  district?: string;
-  state?: string;
+  fullName: string
+
+  phone: string
+
+  pin: string
+
+  workerType?: "ASHA" | "ANM" | "CHO" | "Health Worker"
+
+  village: string
+
+  subCentre?: string
+
+  assignedPhc?: string
+
+  district?: string
+
+  state?: string
 }
 
 export interface WorkerRegistrationResult {
-  token: string;
-  status:
-    | 'ACTIVE'
-    | 'PENDING_VERIFICATION';
-  user: AuthUser;
+  token: string
+
+  status: "ACTIVE" | "PENDING_VERIFICATION"
+
+  user: AuthUser
+
   worker: {
-    id: string;
-    workerCode: string;
-    name: string;
-    role: string;
-    village: string;
-    subCentre: string;
-    assignedPhc: string;
-    district: string;
-    state: string;
-    status: string;
-  };
+    id: string
+
+    workerCode: string
+
+    name: string
+
+    role: string
+
+    village: string
+
+    subCentre: string
+
+    assignedPhc: string
+
+    district: string
+
+    state: string
+
+    status: string
+  }
 }
 
 export async function registerWorker(
-  payload: WorkerRegistrationPayload
+  payload: WorkerRegistrationPayload,
 ): Promise<WorkerRegistrationResult> {
-  const res =
-    await request<
-      ApiResponse<WorkerRegistrationResult>
-    >('/workers/register', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+  const res = await request<ApiResponse<WorkerRegistrationResult>>(
+    "/workers/register",
+    {
+      method: "POST",
 
-  return res.data!;
+      body: JSON.stringify(payload),
+    },
+  )
+
+  return res.data!
 }
 
 // ─── Patients ────────────────────────────────────────────────────────────────
 
-export async function getPatients(
-  search?: string
-): Promise<any[]> {
-  const query = search
-    ? `?q=${encodeURIComponent(search)}`
-    : '';
+export async function getPatients(search?: string): Promise<any[]> {
+  const query = search ? `?q=${encodeURIComponent(search)}` : ""
 
-  const res =
-    await request<
-      ApiResponse<{
-        patients: any[];
-      }>
-    >(`/patients${query}`);
+  const res = await request<ApiResponse<{
+    patients: any[]
+  }>>(`/patients${query}`)
 
-  return res.data?.patients || [];
+  return res.data?.patients || []
 }
 
 export async function getPatientByHealthId(
   healthId: string,
-  purpose?: string
-): Promise<any> {
-  const query = purpose ? `?purpose=${encodeURIComponent(purpose)}` : '';
-  const res =
-    await request<
-      ApiResponse<{
-        patient: any;
-        consultations: any[];
-        referrals: any[];
-        hasAccess?: boolean;
-        activeConsent?: any;
-        pendingRequest?: any;
-      }>
-    >(
-      `/patients/${encodeURIComponent(
-        healthId
-      )}${query}`
-    );
 
-  return res.data;
+  purpose?: string,
+): Promise<any> {
+  const query = purpose ? `?purpose=${encodeURIComponent(purpose)}` : ""
+
+  const res = await request<ApiResponse<{
+    patient: any
+
+    consultations: any[]
+
+    referrals: any[]
+
+    hasAccess?: boolean
+
+    activeConsent?: any
+
+    pendingRequest?: any
+  }>>(`/patients/${encodeURIComponent(healthId)}${query}`)
+
+  return res.data
 }
 
 export async function verifyPatientInCloud(
-  healthId: string
+  healthId: string,
 ): Promise<{ exists: boolean; patient?: any; error?: string }> {
   try {
-    const data = await getPatientByHealthId(healthId);
+    const data = await getPatientByHealthId(healthId)
+
     if (data?.patient) {
-      return { exists: true, patient: data.patient };
+      return { exists: true, patient: data.patient }
     }
-    return { exists: false };
+
+    return { exists: false }
   } catch (err: any) {
-    return { exists: false, error: err.message };
+    return { exists: false, error: err.message }
   }
 }
 
 // ─── Consultations ───────────────────────────────────────────────────────────
 
 export interface CreateConsultationPayload {
-  patientId: string;
-  referralId?: string;
-  workerId?: string;
-  workerName?: string;
-  doctorId?: string;
-  doctorName?: string;
-  facilityName?: string;
-  symptoms?: string[];
-  vitals?: Record<string, any>;
-  diagnosis?: string;
-  treatment?: string;
-  prescription?: string[];
-  notes?: string;
-  riskLevel?:
-    | 'low'
-    | 'moderate'
-    | 'high'
-    | 'critical';
-  referralStatus?:
-    | 'pending'
-    | 'accepted'
-    | 'in-consultation'
-    | 'referred'
-    | 'completed';
-  followUpDate?: string;
+  patientId: string
+
+  referralId?: string
+
+  workerId?: string
+
+  workerName?: string
+
+  doctorId?: string
+
+  doctorName?: string
+
+  facilityName?: string
+
+  symptoms?: string[]
+
+  vitals?: Record<string, any>
+
+  diagnosis?: string
+
+  treatment?: string
+
+  prescription?: string[]
+
+  notes?: string
+
+  riskLevel?: "low" | "moderate" | "high" | "critical"
+
+  referralStatus?: "pending" | "accepted" | "in-consultation" | "referred" | "completed"
+
+  followUpDate?: string
 }
 
-export async function getConsultations(
-  patientId?: string
-): Promise<any[]> {
-  const query = patientId
-    ? `?patientId=${encodeURIComponent(
-        patientId
-      )}`
-    : '';
+export async function getConsultations(patientId?: string): Promise<any[]> {
+  const query = patientId ? `?patientId=${encodeURIComponent(patientId)}` : ""
 
-  const res =
-    await request<
-      ApiResponse<{
-        consultations: any[];
-      }>
-    >(`/consultations${query}`);
+  const res = await request<ApiResponse<{
+    consultations: any[]
+  }>>(`/consultations${query}`)
 
-  return res.data?.consultations || [];
+  return res.data?.consultations || []
 }
 
 export async function createConsultation(
-  payload: CreateConsultationPayload
+  payload: CreateConsultationPayload,
 ): Promise<any> {
-  const res =
-    await request<
-      ApiResponse<{
-        consultation: any;
-        aiAssessment?: any;
-      }>
-    >('/consultations', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+  const res = await request<ApiResponse<{
+    consultation: any
 
-  return res.data;
+    aiAssessment?: any
+  }>>("/consultations", {
+    method: "POST",
+
+    body: JSON.stringify(payload),
+  })
+
+  return res.data
 }
 
 export async function updateConsultation(
   id: string,
-  payload: Partial<CreateConsultationPayload>
-): Promise<any> {
-  const res =
-    await request<
-      ApiResponse<{
-        consultation: any;
-      }>
-    >(`/consultations/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    });
 
-  return res.data;
+  payload: Partial<CreateConsultationPayload>,
+): Promise<any> {
+  const res = await request<ApiResponse<{
+    consultation: any
+  }>>(`/consultations/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+
+    body: JSON.stringify(payload),
+  })
+
+  return res.data
 }
 
 // ─── Referrals ───────────────────────────────────────────────────────────────
 
 export interface CreateReferralPayload {
-  patientId: string;
-  consultationId?: string;
-  fromWorkerId?: string;
-  fromWorkerName?: string;
-  fromWorker?: string;
-  toFacilityId?: string;
-  toFacilityName?: string;
-  toPHC?: string;
-  toDoctorId?: string;
-  reason: string;
-  priority?:
-    | 'routine'
-    | 'urgent'
-    | 'emergency';
-  riskLevel?:
-    | 'low'
-    | 'moderate'
-    | 'high'
-    | 'critical';
-  notes?: string;
-  aiSummary?: string;
+  patientId: string
+
+  consultationId?: string
+
+  fromWorkerId?: string
+
+  fromWorkerName?: string
+
+  fromWorker?: string
+
+  toFacilityId?: string
+
+  toFacilityName?: string
+
+  toPHC?: string
+
+  toDoctorId?: string
+
+  reason: string
+
+  priority?: "routine" | "urgent" | "emergency"
+
+  riskLevel?: "low" | "moderate" | "high" | "critical"
+
+  notes?: string
+
+  aiSummary?: string
 }
 
 export async function getReferrals(
   patientId?: string,
-  status?: string
+
+  status?: string,
 ): Promise<any[]> {
-  const params = new URLSearchParams();
-  if (patientId) params.append('patientId', patientId);
-  if (status && status !== 'all') params.append('status', status);
-  const query = params.toString() ? `?${params.toString()}` : '';
+  const params = new URLSearchParams()
 
-  const res =
-    await request<
-      ApiResponse<{
-        referrals: any[];
-      }>
-    >(`/referrals${query}`);
+  if (patientId) params.append("patientId", patientId)
 
-  return res.data?.referrals || [];
+  if (status && status !== "all") params.append("status", status)
+
+  const query = params.toString() ? `?${params.toString()}` : ""
+
+  const res = await request<ApiResponse<{
+    referrals: any[]
+  }>>(`/referrals${query}`)
+
+  return res.data?.referrals || []
 }
 
 export async function getReferralFacilities(): Promise<any[]> {
-  const res =
-    await request<
-      ApiResponse<{
-        facilities: any[];
-      }>
-    >('/referrals/facilities');
+  const res = await request<ApiResponse<{
+    facilities: any[]
+  }>>("/referrals/facilities")
 
-  return res.data?.facilities || [];
+  return res.data?.facilities || []
 }
 
 export async function getReferralDoctors(): Promise<any[]> {
   const res =
-    await request<
-      ApiResponse<{
-        doctors: any[];
-      }>
-    >('/referrals/doctors');
+    await request<ApiResponse<{
+      doctors: any[]
+    }>>("/referrals/doctors")
 
-  return res.data?.doctors || [];
+  return res.data?.doctors || []
 }
 
 export async function getReferralWorkers(): Promise<any[]> {
   const res =
-    await request<
-      ApiResponse<{
-        workers: any[];
-      }>
-    >('/referrals/workers');
+    await request<ApiResponse<{
+      workers: any[]
+    }>>("/referrals/workers")
 
-  return res.data?.workers || [];
+  return res.data?.workers || []
 }
 
 export async function createReferral(
-  payload: CreateReferralPayload
+  payload: CreateReferralPayload,
 ): Promise<any> {
-  const res =
-    await request<
-      ApiResponse<{
-        referral: any;
-      }>
-    >('/referrals', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+  const res = await request<ApiResponse<{
+    referral: any
+  }>>("/referrals", {
+    method: "POST",
 
-  return res.data;
+    body: JSON.stringify(payload),
+  })
+
+  return res.data
 }
 
 export async function updateReferralStatus(
   id: string,
-  status: string,
-  notes?: string
-): Promise<any> {
-  const res =
-    await request<
-      ApiResponse<{
-        referral: any;
-      }>
-    >(
-      `/referrals/${encodeURIComponent(
-        id
-      )}/status`,
-      {
-        method: 'PATCH',
-        body: JSON.stringify({
-          status,
-          notes,
-        }),
-      }
-    );
 
-  return res.data;
+  status: string,
+
+  notes?: string,
+): Promise<any> {
+  const res = await request<ApiResponse<{
+    referral: any
+  }>>(
+    `/referrals/${encodeURIComponent(id)}/status`,
+
+    {
+      method: "PATCH",
+
+      body: JSON.stringify({
+        status,
+
+        notes,
+      }),
+    },
+  )
+
+  return res.data
 }
 
 // ─── Medicines ───────────────────────────────────────────────────────────────
 
 export async function getMedicines(
   search?: string,
-  category?: string
+
+  category?: string,
 ): Promise<any[]> {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams()
 
   if (search) {
-    params.append('search', search);
+    params.append("search", search)
   }
 
   if (category) {
-    params.append('category', category);
+    params.append("category", category)
   }
 
-  const query = params.toString()
-    ? `?${params.toString()}`
-    : '';
+  const query = params.toString() ? `?${params.toString()}` : ""
 
-  const res =
-    await request<
-      ApiResponse<{
-        medicines: any[];
-      }>
-    >(`/medicines${query}`);
+  const res = await request<ApiResponse<{
+    medicines: any[]
+  }>>(`/medicines${query}`)
 
-  return res.data?.medicines || [];
+  return res.data?.medicines || []
 }
 
 // ─── AI ──────────────────────────────────────────────────────────────────────
 
-export async function getAiAssessments(
-  patientId?: string
-): Promise<any[]> {
-  const query = patientId
-    ? `?patientId=${encodeURIComponent(
-        patientId
-      )}`
-    : '';
+export async function getAiAssessments(patientId?: string): Promise<any[]> {
+  const query = patientId ? `?patientId=${encodeURIComponent(patientId)}` : ""
 
-  const res =
-    await request<
-      ApiResponse<{
-        assessments: any[];
-      }>
-    >(`/ai-assessments${query}`);
+  const res = await request<ApiResponse<{
+    assessments: any[]
+  }>>(`/ai-assessments${query}`)
 
-  return res.data?.assessments || [];
+  return res.data?.assessments || []
 }
 
 // ─── Standardized Symptoms & XGBoost AI ───────────────────────────────────────
 
 export interface StandardizedSymptom {
-  id: string;
-  code: string;
-  name: string;
-  nameHi?: string;
-  category: string;
-  synonyms: string[];
-  icd10Code?: string;
-  defaultWeight: number;
+  id: string
+
+  code: string
+
+  name: string
+
+  nameHi?: string
+
+  category: string
+
+  synonyms: string[]
+
+  icd10Code?: string
+
+  defaultWeight: number
 }
 
-export async function getSymptoms(query?: string): Promise<StandardizedSymptom[]> {
-  const q = query ? `?q=${encodeURIComponent(query.trim())}` : '';
-  const res = await request<ApiResponse<{ symptoms: StandardizedSymptom[] }>>(`/symptoms${q}`);
-  return res.data?.symptoms || [];
+export async function getSymptoms(
+  query?: string,
+): Promise<StandardizedSymptom[]> {
+  const q = query ? `?q=${encodeURIComponent(query.trim())}` : ""
+
+  const res = await request<ApiResponse<{ symptoms: StandardizedSymptom[] }>>(
+    `/symptoms${q}`,
+  )
+
+  return res.data?.symptoms || []
 }
 
 export interface RiskPredictionResponse {
-  riskLevel: 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL';
-  confidence: number;
+  riskLevel: "LOW" | "MODERATE" | "HIGH" | "CRITICAL"
+
+  confidence: number
+
   probabilities: {
-    low: number;
-    moderate: number;
-    high: number;
-    critical: number;
-  };
-  abnormalVitals: string[];
-  reasoning: string;
-  recommendedAction: string;
-  modelVersion: string;
-  standardizedCodes: string[];
+    low: number
+
+    moderate: number
+
+    high: number
+
+    critical: number
+  }
+
+  abnormalVitals: string[]
+
+  reasoning: string
+
+  recommendedAction: string
+
+  modelVersion: string
+
+  standardizedCodes: string[]
 }
 
 export async function predictRisk(payload: {
-  age?: number;
-  gender?: string;
-  vitals: any;
-  symptoms: string[];
-  standardizedSymptomCodes?: string[];
-  obs?: string;
+  age?: number
+
+  gender?: string
+
+  vitals: any
+
+  symptoms: string[]
+
+  standardizedSymptomCodes?: string[]
+
+  obs?: string
 }): Promise<RiskPredictionResponse> {
-  const res = await request<ApiResponse<RiskPredictionResponse>>('/assessments/predict-risk', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  return res.data!;
+  const res = await request<ApiResponse<RiskPredictionResponse>>(
+    "/assessments/predict-risk",
+    {
+      method: "POST",
+
+      body: JSON.stringify(payload),
+    },
+  )
+
+  return res.data!
 }
 
 export async function generateAiAssessment(payload: {
-  patientId: string;
-  symptoms: string[];
-  standardizedSymptomCodes?: string[];
-  vitals: any;
-  obs?: string;
+  patientId: string
+
+  symptoms: string[]
+
+  standardizedSymptomCodes?: string[]
+
+  vitals: any
+
+  obs?: string
 }): Promise<any> {
-  const res = await request<ApiResponse<{ assessment: any; prediction: RiskPredictionResponse }>>(
-    '/assessments/generate',
+  const res = await request<ApiResponse<{
+    assessment: any
+    prediction: RiskPredictionResponse
+  }>>(
+    "/assessments/generate",
+
     {
-      method: 'POST',
+      method: "POST",
+
       body: JSON.stringify(payload),
-    }
-  );
-  return res.data;
+    },
+  )
+
+  return res.data
 }
 
 // ─── Doctors ─────────────────────────────────────────────────────────────────
 
 export async function getDoctors(): Promise<any[]> {
   const res =
-    await request<
-      ApiResponse<{
-        doctors: any[];
-      }>
-    >('/doctors');
+    await request<ApiResponse<{
+      doctors: any[]
+    }>>("/doctors")
 
-  return res.data?.doctors || [];
+  return res.data?.doctors || []
 }
 
 export async function updateDoctorDutyStatus(
   id: string,
-  dutyStatus:
-    | 'AVAILABLE'
-    | 'BUSY'
-    | 'OFFLINE'
-): Promise<any> {
-  const res =
-    await request<
-      ApiResponse<{
-        doctor: any;
-      }>
-    >(
-      `/doctors/${encodeURIComponent(
-        id
-      )}/duty-status`,
-      {
-        method: 'PATCH',
-        body: JSON.stringify({
-          dutyStatus,
-        }),
-      }
-    );
 
-  return res.data;
+  dutyStatus: "AVAILABLE" | "BUSY" | "OFFLINE",
+): Promise<any> {
+  const res = await request<ApiResponse<{
+    doctor: any
+  }>>(
+    `/doctors/${encodeURIComponent(id)}/duty-status`,
+
+    {
+      method: "PATCH",
+
+      body: JSON.stringify({
+        dutyStatus,
+      }),
+    },
+  )
+
+  return res.data
 }
 
 // ─── Dashboards ──────────────────────────────────────────────────────────────
 
 export async function getAdminDashboardData(): Promise<any> {
-  const res =
-    await request<ApiResponse<any>>(
-      '/dashboards/admin'
-    );
+  const res = await request<ApiResponse<any>>("/dashboards/admin")
 
-  return res.data;
+  return res.data
 }
 
 export async function getWorkerDashboardData(): Promise<any> {
-  const res =
-    await request<ApiResponse<any>>(
-      '/dashboards/worker'
-    );
+  const res = await request<ApiResponse<any>>("/dashboards/worker")
 
-  return res.data;
+  return res.data
 }
 
 export async function getDoctorDashboardData(doctorId?: string): Promise<any> {
-  const query = doctorId ? `?doctorId=${encodeURIComponent(doctorId)}` : '';
-  const res =
-    await request<ApiResponse<any>>(
-      `/dashboards/doctor${query}`
-    );
+  const query = doctorId ? `?doctorId=${encodeURIComponent(doctorId)}` : ""
 
-  return res.data;
+  const res = await request<ApiResponse<any>>(`/dashboards/doctor${query}`)
+
+  return res.data
 }
 
-export async function getPatientDashboardData(
-  healthId: string
-): Promise<any> {
-  const res =
-    await request<ApiResponse<any>>(
-      `/dashboards/patient/${encodeURIComponent(
-        healthId
-      )}`
-    );
+export async function getPatientDashboardData(healthId: string): Promise<any> {
+  const res = await request<ApiResponse<any>>(
+    `/dashboards/patient/${encodeURIComponent(healthId)}`,
+  )
 
-  return res.data;
+  return res.data
 }
 
 // ─── Emergency & Break-Glass (T3 Tier) ──────────────────────────────────────
 
 export interface AuthorizeEmergencyPayload {
-  sosAlertId?: string;
-  patientId?: string;
-  patientHealthId: string;
-  patientName: string;
-  doctorId?: string;
-  doctorName: string;
-  facilityId?: string;
-  facilityName: string;
-  reason: string;
-  note: string;
-  records?: string;
+  sosAlertId?: string
+
+  patientId?: string
+
+  patientHealthId: string
+
+  patientName: string
+
+  doctorId?: string
+
+  doctorName: string
+
+  facilityId?: string
+
+  facilityName: string
+
+  reason: string
+
+  note: string
+
+  records?: string
 }
 
 export async function authorizeEmergency(
-  payload: AuthorizeEmergencyPayload
+  payload: AuthorizeEmergencyPayload,
 ): Promise<{ token: string; expiresInSeconds: number; log: any }> {
-  const res = await request<ApiResponse<any>>('/emergency/authorize', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  const res = await request<ApiResponse<any>>("/emergency/authorize", {
+    method: "POST",
 
-  return res.data;
+    body: JSON.stringify(payload),
+  })
+
+  return res.data
 }
 
 export async function getEmergencyLogs(): Promise<any[]> {
-  const res = await request<ApiResponse<any[]>>('/emergency/logs');
-  return res.data || [];
+  const res = await request<ApiResponse<any[]>>("/emergency/logs")
+
+  return res.data || []
 }
 
 export interface DispatchSosPayload {
-  fromName: string;
-  role: string;
-  senderId?: string;
-  patientId?: string;
-  patientHealthId: string;
-  facilityId?: string;
-  location: string;
-  targetedDoctorId?: string;
-  vitalsSnapshot?: any;
+  fromName: string
+
+  role: string
+
+  senderId?: string
+
+  patientId?: string
+
+  patientHealthId: string
+
+  facilityId?: string
+
+  location: string
+
+  targetedDoctorId?: string
+
+  vitalsSnapshot?: any
 }
 
-export async function dispatchSosAlert(payload: DispatchSosPayload): Promise<any> {
-  const res = await request<ApiResponse<any>>('/emergency/sos', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+export async function dispatchSosAlert(
+  payload: DispatchSosPayload,
+): Promise<any> {
+  const res = await request<ApiResponse<any>>("/emergency/sos", {
+    method: "POST",
 
-  return res.data;
+    body: JSON.stringify(payload),
+  })
+
+  return res.data
 }
 
 export async function getActiveSosAlerts(): Promise<any[]> {
-  const res = await request<ApiResponse<any[]>>('/emergency/sos/active');
-  return res.data || [];
+  const res = await request<ApiResponse<any[]>>("/emergency/sos/active")
+
+  return res.data || []
 }
 
 export async function getDoctorSosInbox(doctorId?: string): Promise<any[]> {
-  const query = doctorId ? `?doctorId=${encodeURIComponent(doctorId)}` : '';
-  const res = await request<ApiResponse<any[]>>(`/emergency/sos/inbox${query}`);
-  return res.data || [];
+  const query = doctorId ? `?doctorId=${encodeURIComponent(doctorId)}` : ""
+
+  const res = await request<ApiResponse<any[]>>(`/emergency/sos/inbox${query}`)
+
+  return res.data || []
 }
 
-export async function acceptSosAlert(id: string, responderId?: string, responderName?: string): Promise<any> {
-  const res = await request<ApiResponse<any>>(`/emergency/sos/${encodeURIComponent(id)}/accept`, {
-    method: 'POST',
-    body: JSON.stringify({ responderId, responderName }),
-  });
+export async function acceptSosAlert(
+  id: string,
+  responderId?: string,
+  responderName?: string,
+): Promise<any> {
+  const res = await request<ApiResponse<any>>(
+    `/emergency/sos/${encodeURIComponent(id)}/accept`,
+    {
+      method: "POST",
 
-  return res.data;
+      body: JSON.stringify({ responderId, responderName }),
+    },
+  )
+
+  return res.data
 }
 
-export async function declineSosAlert(id: string, responderId?: string): Promise<any> {
-  const res = await request<ApiResponse<any>>(`/emergency/sos/${encodeURIComponent(id)}/decline`, {
-    method: 'POST',
-    body: JSON.stringify({ responderId }),
-  });
+export async function declineSosAlert(
+  id: string,
+  responderId?: string,
+): Promise<any> {
+  const res = await request<ApiResponse<any>>(
+    `/emergency/sos/${encodeURIComponent(id)}/decline`,
+    {
+      method: "POST",
 
-  return res.data;
+      body: JSON.stringify({ responderId }),
+    },
+  )
+
+  return res.data
 }
 
 export async function cancelSosAlert(id: string): Promise<any> {
-  const res = await request<ApiResponse<any>>(`/emergency/sos/${encodeURIComponent(id)}/cancel`, {
-    method: 'POST',
-  });
+  const res = await request<ApiResponse<any>>(
+    `/emergency/sos/${encodeURIComponent(id)}/cancel`,
+    {
+      method: "POST",
+    },
+  )
 
-  return res.data;
+  return res.data
 }
 
 export async function getSosAlertStatus(id: string): Promise<any> {
-  const res = await request<ApiResponse<any>>(`/emergency/sos/${encodeURIComponent(id)}/status`);
-  return res.data;
+  const res = await request<ApiResponse<any>>(
+    `/emergency/sos/${encodeURIComponent(id)}/status`,
+  )
+
+  return res.data
 }
 
-export async function updateSosStatus(id: string, status: string, respondingDoctorId?: string): Promise<any> {
-  const res = await request<ApiResponse<any>>(`/emergency/sos/${encodeURIComponent(id)}/status`, {
-    method: 'PATCH',
-    body: JSON.stringify({ status, respondingDoctorId }),
-  });
+export async function updateSosStatus(
+  id: string,
+  status: string,
+  respondingDoctorId?: string,
+): Promise<any> {
+  const res = await request<ApiResponse<any>>(
+    `/emergency/sos/${encodeURIComponent(id)}/status`,
+    {
+      method: "PATCH",
 
-  return res.data;
+      body: JSON.stringify({ status, respondingDoctorId }),
+    },
+  )
+
+  return res.data
 }
 
 // ─── Patient Profile, Consent & Audit Helpers ─────────────────────────────────
 
-export async function updatePatient(patientId: string, payload: any): Promise<any> {
-  const res = await request<ApiResponse<any>>(`/patients/${encodeURIComponent(patientId)}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload),
-  });
-  return res.data;
+export async function updatePatient(
+  patientId: string,
+  payload: any,
+): Promise<any> {
+  const res = await request<ApiResponse<any>>(
+    `/patients/${encodeURIComponent(patientId)}`,
+    {
+      method: "PATCH",
+
+      body: JSON.stringify(payload),
+    },
+  )
+
+  return res.data
 }
 
 export async function getPatientAuditLogs(patientId: string): Promise<any[]> {
-  const res = await request<ApiResponse<{ auditLogs: any[] }>>(`/patients/${encodeURIComponent(patientId)}/audit-logs`);
-  return res.data?.auditLogs || [];
+  const res = await request<ApiResponse<{ auditLogs: any[] }>>(
+    `/patients/${encodeURIComponent(patientId)}/audit-logs`,
+  )
+
+  return res.data?.auditLogs || []
 }
 
-export async function getPatientAccessRequests(patientId: string): Promise<any[]> {
-  const res = await request<ApiResponse<{ requests: any[] }>>(`/patients/${encodeURIComponent(patientId)}/access-requests`);
-  return res.data?.requests || [];
+export async function getPatientAccessRequests(
+  patientId: string,
+): Promise<any[]> {
+  const res = await request<ApiResponse<{ requests: any[] }>>(
+    `/patients/${encodeURIComponent(patientId)}/access-requests`,
+  )
+
+  return res.data?.requests || []
 }
 
 export async function requestPatientAccess(
   patientId: string,
+
   payload: {
-    duration: '1 day' | '1 week' | '1 month' | '3 months' | string;
-    reason: string;
-    dataScope: string[];
-  }
+    duration: "1 day" | "1 week" | "1 month" | "3 months" | string
+
+    reason: string
+
+    dataScope: string[]
+  },
 ): Promise<any> {
   const res = await request<ApiResponse<{ request: any }>>(
     `/patients/${encodeURIComponent(patientId)}/access-requests`,
+
     {
-      method: 'POST',
+      method: "POST",
+
       body: JSON.stringify(payload),
-    }
-  );
-  return res.data;
+    },
+  )
+
+  return res.data
 }
 
 export async function getWorkers(): Promise<any[]> {
-  const res = await request<ApiResponse<{ workers?: any[] }>>('/workers').catch(() => null);
+  const res = await request<ApiResponse<{ workers?: any[] }>>("/workers").catch(
+    () => null,
+  )
+
   if (res?.data?.workers && res.data.workers.length > 0) {
-    return res.data.workers;
+    return res.data.workers
   }
-  const mockRes = await request<ApiResponse<{ workers?: any[]; data?: any[] }>>('/abdm/mock/workers').catch(() => null);
-  const data = mockRes?.data?.workers || (Array.isArray(mockRes?.data) ? mockRes.data : []);
-  return data;
+
+  const mockRes = await request<ApiResponse<{ workers?: any[]; data?: any[] }>>(
+    "/abdm/mock/workers",
+  ).catch(() => null)
+
+  const data =
+    mockRes?.data?.workers || (Array.isArray(mockRes?.data) ? mockRes.data : [])
+
+  return data
 }
 
 export async function createPatientConsent(payload: {
-  patientId: string;
-  grantedTo: string;
-  role: string;
-  organization: string;
-  purpose: string;
-  dataScope: string[];
-  expiresAt?: string;
+  patientId: string
+
+  grantedTo: string
+
+  role: string
+
+  organization: string
+
+  purpose: string
+
+  dataScope: string[]
+
+  expiresAt?: string
 }): Promise<any> {
-  const res = await request<ApiResponse<any>>('/abdm/mock/consents', {
-    method: 'POST',
+  const res = await request<ApiResponse<any>>("/abdm/mock/consents", {
+    method: "POST",
+
     body: JSON.stringify(payload),
-  });
-  return res.data;
+  })
+
+  return res.data
 }
 
-export async function revokePatientConsent(consentId: string, reason?: string): Promise<any> {
-  const res = await request<ApiResponse<any>>(`/abdm/mock/consents/${encodeURIComponent(consentId)}/revoke`, {
-    method: 'POST',
-    body: JSON.stringify({ reason }),
-  });
-  return res.data;
+export async function revokePatientConsent(
+  consentId: string,
+  reason?: string,
+): Promise<any> {
+  const res = await request<ApiResponse<any>>(
+    `/abdm/mock/consents/${encodeURIComponent(consentId)}/revoke`,
+    {
+      method: "POST",
+
+      body: JSON.stringify({ reason }),
+    },
+  )
+
+  return res.data
 }
 
 export async function approvePatientConsent(consentId: string): Promise<any> {
-  const res = await request<ApiResponse<any>>(`/abdm/mock/consents/${encodeURIComponent(consentId)}/approve`, {
-    method: 'POST',
-  });
-  return res.data;
+  const res = await request<ApiResponse<any>>(
+    `/abdm/mock/consents/${encodeURIComponent(consentId)}/approve`,
+    {
+      method: "POST",
+    },
+  )
+
+  return res.data
+}
+
+export interface BookAppointmentPayload {
+  patientId: string
+  doctorId: string
+  facilityId?: string
+  scheduledDate: string
+  timeSlot?: string
+  reason?: string
+  notes?: string
+  priority?: "ROUTINE" | "URGENT" | "HIGH_RISK"
+  source?: "PATIENT" | "ASHA" | "REFERRAL"
+  bookedByWorkerId?: string
+}
+
+export async function bookAppointment(
+  payload: BookAppointmentPayload,
+): Promise<any> {
+  const res = await request<ApiResponse<{ appointment: any }>>(
+    "/appointments",
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  )
+
+  return res.data?.appointment
+}
+
+export async function getDoctorAppointments(
+  doctorId: string,
+  date?: string,
+  status?: string,
+): Promise<any[]> {
+  const params = new URLSearchParams()
+  if (date) params.set("date", date)
+  if (status) params.set("status", status)
+  const query = params.toString() ? `?${params.toString()}` : ""
+
+  const res = await request<ApiResponse<{ appointments: any[] }>>(
+    `/appointments/doctor/${encodeURIComponent(doctorId)}${query}`,
+  ).catch(() => null)
+
+  return res?.data?.appointments || []
+}
+
+export async function getPatientAppointments(
+  patientId: string,
+): Promise<any[]> {
+  const res = await request<ApiResponse<{ appointments: any[] }>>(
+    `/appointments/patient/${encodeURIComponent(patientId)}`,
+  ).catch(() => null)
+
+  return res?.data?.appointments || []
+}
+
+export async function getFacilityAppointments(
+  facilityId: string,
+  date?: string,
+): Promise<any[]> {
+  const query = date ? `?date=${encodeURIComponent(date)}` : ""
+  const res = await request<ApiResponse<{ appointments: any[] }>>(
+    `/appointments/facility/${encodeURIComponent(facilityId)}${query}`,
+  ).catch(() => null)
+
+  return res?.data?.appointments || []
+}
+
+export async function updateAppointmentStatus(
+  id: string,
+  status: "CONFIRMED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED",
+  notes?: string,
+): Promise<any> {
+  const res = await request<ApiResponse<{ appointment: any }>>(
+    `/appointments/${encodeURIComponent(id)}/status`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status, notes }),
+    },
+  )
+
+  return res.data?.appointment
+}
+
+export interface DoctorSlotItem {
+  timeSlot: string
+  capacity: number
+  bookedCount: number
+  availableSpots: number
+  status: "AVAILABLE" | "ALMOST_FULL" | "FULL"
+}
+
+export interface DoctorSlotsResponse {
+  doctorId: string
+  doctorName: string
+  scheduledDate: string
+  slotCapacity: number
+  totalBooked: number
+  slots: DoctorSlotItem[]
+}
+
+export async function getDoctorSlots(
+  doctorId: string,
+  date?: string,
+): Promise<DoctorSlotsResponse | null> {
+  const query = date ? `?date=${encodeURIComponent(date)}` : ""
+  const res = await request<ApiResponse<DoctorSlotsResponse>>(
+    `/appointments/doctor/${encodeURIComponent(doctorId)}/slots${query}`,
+  ).catch(() => null)
+  return res?.data || null
+}
+
+export async function updateDoctorSlotCapacity(
+  doctorId: string,
+  capacity: number,
+): Promise<any> {
+  const res = await request<ApiResponse<any>>(
+    `/appointments/doctor/${encodeURIComponent(doctorId)}/capacity`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ capacity }),
+    },
+  )
+  return res.data
 }
 
 // ============================================================================
@@ -1243,49 +1631,49 @@ export async function approvePatientConsent(consentId: string): Promise<any> {
 // ============================================================================
 
 export interface TeleconsultationSessionPayload {
-  patientId?: string;
-  doctorId?: string;
-  role?: 'doctor' | 'worker' | 'patient';
+  patientId?: string
+  doctorId?: string
+  role?: 'doctor' | 'worker' | 'patient'
 }
 
 export interface SaveTeleconsultationPayload {
-  sessionId: string;
-  patientId: string;
-  doctorId?: string;
-  doctorName?: string;
-  workerId?: string;
-  workerName?: string;
-  facilityName?: string;
-  symptoms?: string[];
-  vitals?: any;
-  diagnosis?: string;
-  treatment?: string;
-  prescription: string[];
-  notes?: string;
-  duration?: number;
-  networkQuality?: string;
-  riskLevel?: string;
-  referralStatus?: string;
-  followUpDate?: string;
+  sessionId: string
+  patientId: string
+  doctorId?: string
+  doctorName?: string
+  workerId?: string
+  workerName?: string
+  facilityName?: string
+  symptoms?: string[]
+  vitals?: any
+  diagnosis?: string
+  treatment?: string
+  prescription: string[]
+  notes?: string
+  duration?: number
+  networkQuality?: string
+  riskLevel?: string
+  referralStatus?: string
+  followUpDate?: string
 }
 
 export async function createTeleconsultationSession(payload: TeleconsultationSessionPayload): Promise<any> {
   const res = await request<ApiResponse<any>>('/teleconsultation/sessions', {
     method: 'POST',
     body: JSON.stringify(payload),
-  });
-  return res?.data;
+  })
+  return res?.data
 }
 
 export async function saveTeleconsultationRecord(payload: SaveTeleconsultationPayload): Promise<any> {
   const res = await request<ApiResponse<any>>('/teleconsultation/consultations', {
     method: 'POST',
     body: JSON.stringify(payload),
-  });
-  return res?.data;
+  })
+  return res?.data
 }
 
 export async function getActiveTeleconsultationCall(patientId: string): Promise<any> {
-  const res = await request<ApiResponse<any>>(`/teleconsultation/active-call?patientId=${encodeURIComponent(patientId)}`).catch(() => null);
-  return res?.data?.activeCall || null;
+  const res = await request<ApiResponse<any>>(`/teleconsultation/active-call?patientId=${encodeURIComponent(patientId)}`).catch(() => null)
+  return res?.data?.activeCall || null
 }

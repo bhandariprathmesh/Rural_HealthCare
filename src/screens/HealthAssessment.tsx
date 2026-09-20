@@ -9,6 +9,8 @@ import {
   getSymptoms,
   predictRisk,
   generateAiAssessment,
+  getDoctorAppointments,
+  getDoctorDashboardData,
   type StandardizedSymptom,
   type RiskPredictionResponse,
 } from '../api/client';
@@ -71,6 +73,11 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
   const [accessReason, setAccessReason] = useState('');
   const [accessScope, setAccessScope] = useState<string[]>(['Basic Information', 'Consultation History']);
 
+  // Doctor Queue & Patient Prioritization State
+  const [doctorAppointments, setDoctorAppointments] = useState<any[]>([]);
+  const [doctorPatients, setDoctorPatients] = useState<any[]>([]);
+  const [patientFilterTab, setPatientFilterTab] = useState<'all' | 'my-appointments' | 'consented'>('all');
+
   useEffect(() => {
     getSymptoms().then(setSymptomCatalog).catch(() => {});
     getCurrentUser()
@@ -80,6 +87,25 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
           setSelectedPatient(user.patientProfile);
           setStep('vitals');
         } else {
+          // If Doctor, load their active appointments and consented patients for top prioritization
+          if (user?.role === 'DOCTOR') {
+            const docId = user?.doctorProfile?.id || user?.id;
+            if (docId) {
+              getDoctorAppointments(docId)
+                .then((apts) => {
+                  if (Array.isArray(apts)) setDoctorAppointments(apts);
+                })
+                .catch(() => {});
+              getDoctorDashboardData(docId)
+                .then((dash) => {
+                  if (dash?.patients && Array.isArray(dash.patients)) {
+                    setDoctorPatients(dash.patients);
+                  }
+                })
+                .catch(() => {});
+            }
+          }
+
           getPatients().then((pts) => {
             setRealPatients(pts || []);
             if (patientId) {
@@ -147,17 +173,79 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
       const normName = (p.name || '').trim().toLowerCase();
       if (!normName || seen.has(normName)) continue;
       seen.add(normName);
-      list.push(p);
+
+      // Match appointment for logged-in doctor
+      const appt = doctorAppointments.find(
+        (a) =>
+          (a.patientId === p.id ||
+            a.patient?.id === p.id ||
+            a.patient?.healthId === p.healthId ||
+            a.patientId === p.healthId) &&
+          a.status !== 'CANCELLED'
+      );
+
+      const isMyPatient = doctorPatients.some(
+        (dp) => dp.id === p.id || dp.healthId === p.healthId
+      );
+
+      let priorityScore = 10;
+      if (appt) {
+        if (appt.status === 'IN_PROGRESS') priorityScore = 100;
+        else if (appt.status === 'CONFIRMED' || appt.status === 'PENDING') priorityScore = 90;
+        else priorityScore = 80;
+      } else if (isMyPatient) {
+        priorityScore = 50;
+      }
+
+      list.push({
+        ...p,
+        appointment: appt,
+        isMyPatient,
+        priorityScore,
+      });
     }
-    if (!patientSearch.trim()) return list;
-    const q = patientSearch.toLowerCase().trim();
-    return list.filter((p: any) =>
-      (p.name && p.name.toLowerCase().includes(q)) ||
-      (p.healthId && p.healthId.toLowerCase().includes(q)) ||
-      (p.phone && p.phone.includes(q)) ||
-      (p.village && p.village.toLowerCase().includes(q))
-    );
-  }, [realPatients, patientSearch]);
+
+    // Filter by tab if doctor
+    let tabFiltered = list;
+    if (dbUser?.role === 'DOCTOR') {
+      if (patientFilterTab === 'my-appointments') {
+        tabFiltered = list.filter((p) => Boolean(p.appointment));
+      } else if (patientFilterTab === 'consented') {
+        tabFiltered = list.filter((p) => Boolean(p.isMyPatient || p.appointment));
+      }
+    }
+
+    // Filter by search query
+    let searchFiltered = tabFiltered;
+    if (patientSearch.trim()) {
+      const q = patientSearch.toLowerCase().trim();
+      searchFiltered = tabFiltered.filter(
+        (p: any) =>
+          (p.name && p.name.toLowerCase().includes(q)) ||
+          (p.healthId && p.healthId.toLowerCase().includes(q)) ||
+          (p.phone && p.phone.includes(q)) ||
+          (p.village && p.village.toLowerCase().includes(q)) ||
+          (p.appointment && (
+            `token #${p.appointment.tokenNumber}`.toLowerCase().includes(q) ||
+            `token ${p.appointment.tokenNumber}`.toLowerCase().includes(q) ||
+            (p.appointment.timeSlot && p.appointment.timeSlot.toLowerCase().includes(q))
+          ))
+      );
+    }
+
+    // Sort: Pinned appointed patients at top -> Consented -> General
+    return searchFiltered.sort((a, b) => {
+      const diff = b.priorityScore - a.priorityScore;
+      if (diff !== 0) return diff;
+      if (a.appointment && b.appointment) {
+        const prioOrder: Record<string, number> = { HIGH_RISK: 0, URGENT: 1, ROUTINE: 2 };
+        const pDiff = (prioOrder[a.appointment.priority] ?? 9) - (prioOrder[b.appointment.priority] ?? 9);
+        if (pDiff !== 0) return pDiff;
+        return (a.appointment.tokenNumber || 0) - (b.appointment.tokenNumber || 0);
+      }
+      return (a.name || '').localeCompare(b.name || '');
+    });
+  }, [realPatients, patientSearch, doctorAppointments, doctorPatients, patientFilterTab, dbUser]);
 
   async function handleSelectPatientForAssessment(p: any) {
     setCheckingAccess(true);
@@ -171,9 +259,21 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
       const res = await getPatientByHealthId(targetLookup, 'health_assessment');
       
       const isDoctor = dbUser?.role === 'DOCTOR';
-      // For doctor, access requires explicit active consent; for worker, requires worker authorization
+      const hasApptWithDoc = Boolean(
+        p.appointment ||
+          doctorAppointments.some(
+            (a) =>
+              (a.patientId === p.id ||
+                a.patient?.id === p.id ||
+                a.patient?.healthId === p.healthId ||
+                a.patientId === p.healthId) &&
+              a.status !== 'CANCELLED'
+          )
+      );
+
+      // If patient booked an appointment with this doctor, clinical access is pre-authorized for the OPD consultation
       const needsConsent = isDoctor
-        ? (!res?.hasAccess || !res?.activeConsent)
+        ? (!hasApptWithDoc && (!res?.hasAccess || !res?.activeConsent))
         : (res?.hasAccess === false || res?.patient?.hasAccess === false);
 
       if (needsConsent) {
@@ -197,7 +297,24 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
         setStep('vitals');
       }
     } catch {
-      setAccessBlockedPatient(p);
+      // If error but patient had booked appointment, still allow proceeding
+      const hasApptWithDoc = Boolean(
+        p.appointment ||
+          doctorAppointments.some(
+            (a) =>
+              (a.patientId === p.id ||
+                a.patient?.id === p.id ||
+                a.patient?.healthId === p.healthId ||
+                a.patientId === p.healthId) &&
+              a.status !== 'CANCELLED'
+          )
+      );
+      if (hasApptWithDoc) {
+        setSelectedPatient(p);
+        setStep('vitals');
+      } else {
+        setAccessBlockedPatient(p);
+      }
     } finally {
       setCheckingAccess(false);
     }
@@ -564,36 +681,107 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
               </div>
             )}
 
-            <div className="space-y-2 max-h-72 overflow-y-auto">
+            {/* Doctor Specific Filter Tabs */}
+            {dbUser?.role === 'DOCTOR' && (
+              <div className="flex gap-1.5 overflow-x-auto pb-1">
+                {[
+                  { id: 'all', label: `All Patients (${realPatients.length})` },
+                  {
+                    id: 'my-appointments',
+                    label: `⚡ Today's OPD Queue (${doctorAppointments.filter((a) => a.status !== 'CANCELLED').length})`,
+                  },
+                  {
+                    id: 'consented',
+                    label: `✓ Consented (${doctorPatients.length})`,
+                  },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setPatientFilterTab(tab.id as any)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                      patientFilterTab === tab.id
+                        ? 'bg-teal-700 text-white shadow-xs'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
               {filteredPatients.length === 0 ? (
                 <div className="p-4 text-center text-xs text-gray-400">
                   {patientSearch ? `No patients found matching "${patientSearch}"` : 'Loading patients from database…'}
                 </div>
               ) : (
-                filteredPatients.map((p: any) => (
-                  <button
-                    key={p.id || p.healthId}
-                    onClick={() => handleSelectPatientForAssessment(p)}
-                    className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:border-brand-300 hover:bg-brand-50 transition-all text-left cursor-pointer"
-                  >
-                    <div className="w-9 h-9 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-semibold text-sm shrink-0">
-                      {String(p.name || 'P')
-                        .split(' ')
-                        .map((w: string) => w[0])
-                        .join('')
-                        .slice(0, 2)
-                        .toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm text-gray-900 truncate">{p.name}</div>
-                      <div className="text-xs text-gray-500">
-                        {p.age || '--'} yrs · {p.village || p.address || 'N/A'}
+                filteredPatients.map((p: any) => {
+                  const hasAppt = Boolean(p.appointment);
+                  const isConsented = Boolean(p.isMyPatient);
+
+                  return (
+                    <button
+                      key={p.id || p.healthId}
+                      onClick={() => handleSelectPatientForAssessment(p)}
+                      className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left cursor-pointer ${
+                        hasAppt
+                          ? 'border-teal-300 bg-teal-50/40 hover:bg-teal-50/80 hover:border-teal-400 shadow-2xs'
+                          : isConsented
+                          ? 'border-blue-200 bg-blue-50/20 hover:bg-blue-50/60'
+                          : 'border-gray-100 hover:border-brand-300 hover:bg-brand-50'
+                      }`}
+                    >
+                      <div
+                        className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 ${
+                          hasAppt
+                            ? 'bg-teal-600 text-white ring-2 ring-teal-300'
+                            : isConsented
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-brand-100 text-brand-700'
+                        }`}
+                      >
+                        {String(p.name || 'P')
+                          .split(' ')
+                          .map((w: string) => w[0])
+                          .join('')
+                          .slice(0, 2)
+                          .toUpperCase()}
                       </div>
-                      <div className="font-mono text-[10px] text-gray-400">{p.healthId || p.id}</div>
-                    </div>
-                    <Icon name="chevron_right" size={15} className="text-gray-300" />
-                  </button>
-                ))
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-sm text-gray-900 truncate">{p.name}</span>
+                          {hasAppt && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-100 text-teal-800 text-[10px] font-black border border-teal-200">
+                              ⚡ Token #{String(p.appointment.tokenNumber).padStart(2, '0')} · {p.appointment.timeSlot?.split(' - ')[0] || p.appointment.timeSlot}
+                            </span>
+                          )}
+                          {hasAppt && p.appointment.priority === 'HIGH_RISK' && (
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-red-100 text-red-700">
+                              HIGH RISK
+                            </span>
+                          )}
+                          {!hasAppt && isConsented && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-semibold border border-blue-200">
+                              <Icon name="shield" size={10} />
+                              Active Consent
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {p.age || '--'} yrs · {p.village || p.address || 'N/A'} · {p.gender || 'N/A'}
+                        </div>
+                        <div className="font-mono text-[10px] text-gray-400">{p.healthId || p.id}</div>
+                      </div>
+                      <Icon
+                        name="chevron_right"
+                        size={16}
+                        className={hasAppt ? 'text-teal-600 font-bold' : 'text-gray-300'}
+                      />
+                    </button>
+                  );
+                })
               )}
             </div>
           </div>

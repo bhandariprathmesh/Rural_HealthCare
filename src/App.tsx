@@ -585,30 +585,43 @@ export default function App() {
       try {
         const active = await getActiveSosAlerts();
         if (Array.isArray(active)) {
-          setSosAlerts(
-            active.map((a: any) => ({
-              id: a.id,
-              from: a.fromName,
-              role: a.role,
-              patientId: a.patientHealthId,
-              location: a.location,
-              ts:
-                a.ts ||
-                new Date(a.createdAt).toLocaleTimeString('en-IN', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                }),
-              offline: a.isOffline || false,
-              dismissed: a.dismissed || false,
-              status:
-                a.status === 'ACCEPTED'
-                  ? 'acknowledged'
-                  : a.status === 'DECLINED_ALL'
-                  ? 'escalated'
-                  : 'sent',
-              escalationLevel: a.escalationIndex || 0,
-            }))
-          );
+          const mapped = active.map((a: any) => ({
+            id: a.id,
+            from: a.fromName,
+            role: a.role,
+            patientId: a.patientHealthId,
+            location: a.location,
+            ts:
+              a.ts ||
+              new Date(a.createdAt).toLocaleTimeString('en-IN', {
+                hour: '2-digit',
+                minute: '2-digit',
+              }),
+            offline: a.isOffline || false,
+            dismissed: a.dismissed || false,
+            status:
+              a.status === 'ACCEPTED'
+                ? ('acknowledged' as const)
+                : a.status === 'DECLINED_ALL'
+                ? ('escalated' as const)
+                : ('sent' as const),
+            escalationLevel: a.escalationIndex || 0,
+          }));
+
+          setSosAlerts((prev) => {
+            if (
+              prev.length === mapped.length &&
+              prev.every(
+                (p, idx) =>
+                  p.id === mapped[idx].id &&
+                  p.status === mapped[idx].status &&
+                  p.dismissed === mapped[idx].dismissed
+              )
+            ) {
+              return prev;
+            }
+            return mapped;
+          });
         }
       } catch {
         // Silently ignore if network issue
