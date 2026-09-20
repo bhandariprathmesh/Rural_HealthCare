@@ -1126,7 +1126,6 @@ export default function LoginScreen({
                             )?.label
                           }`}
                     </button>
-
                   </div>
                 )}
 

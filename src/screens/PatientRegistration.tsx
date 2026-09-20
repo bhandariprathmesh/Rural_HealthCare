@@ -44,6 +44,7 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
       return;
     }
     setIsSubmitting(true);
+    let payload: any = null;
     try {
       const cleanPhone = form.phone.replace(/\D/g, '').slice(-10);
       const cleanEmergencyPhone = form.emergencyPhone.replace(/\D/g, '').slice(-10);
@@ -59,7 +60,7 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
         return trimmed.split(',').map(s => s.trim()).filter(Boolean);
       };
 
-      const payload: any = {
+      payload = {
         name: form.name.trim(),
         nameHi: form.nameHi.trim() || undefined,
         dob: form.dob,
