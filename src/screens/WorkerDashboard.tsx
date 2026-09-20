@@ -19,7 +19,9 @@ import {
   dispatchSosAlert,
   getSosAlertStatus,
   cancelSosAlert,
+  getFacilityStockSummary,
 } from '../api/client';
+import PhcStockCheckerModal from '../components/PhcStockCheckerModal';
 
 interface ActiveSosAlert {
   id: string;
@@ -181,6 +183,8 @@ export default function WorkerDashboard({
   const [activeSosId, setActiveSosId] = useState<string | null>(null);
   const [liveSosStatus, setLiveSosStatus] = useState<any>(null);
   const [dbUser, setDbUser] = useState<any>(null);
+  const [stockModalOpen, setStockModalOpen] = useState(false);
+  const [facilityStock, setFacilityStock] = useState<any>(null);
 
   const today = new Date().toLocaleDateString('en-IN', {
     day: 'numeric',
@@ -207,6 +211,20 @@ export default function WorkerDashboard({
         }
       });
 
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    getFacilityStockSummary('HFR-2024-SANJIVANI')
+      .then((data) => {
+        if (mounted && data) {
+          setFacilityStock(data);
+        }
+      })
+      .catch(() => {});
     return () => {
       mounted = false;
     };
@@ -1141,13 +1159,23 @@ export default function WorkerDashboard({
               ? 'bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100'
               : 'bg-gray-100 text-gray-700 hover:bg-gray-200',
           },
+          {
+            label: 'PHC Stock',
+            icon: 'pill',
+            onClick: () => setStockModalOpen(true),
+            color: 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100',
+          },
         ].map(action => (
           <button
-            key={action.screen}
-            onClick={() =>
-              navigate(action.screen)
-            }
-            className={`p-4 rounded-2xl flex flex-col items-center gap-2 text-center transition-all active:scale-95 font-medium text-sm ${action.color}`}
+            key={action.label}
+            onClick={() => {
+              if (action.onClick) {
+                action.onClick();
+              } else if (action.screen) {
+                navigate(action.screen);
+              }
+            }}
+            className={`p-4 rounded-2xl flex flex-col items-center gap-2 text-center transition-all active:scale-95 font-medium text-sm cursor-pointer ${action.color}`}
           >
             <Icon
               name={action.icon}
@@ -1159,6 +1187,54 @@ export default function WorkerDashboard({
         ))}
 
       </div>
+
+      {/* PHC Stock & Diagnostic Availability Banner Widget */}
+      <Card className="p-4 bg-gradient-to-r from-emerald-50/70 via-teal-50/50 to-white border-emerald-100/80">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-sm shrink-0">
+              <Icon name="pill" size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-display text-sm font-bold text-gray-900">
+                  PHC Stock & Diagnostic Availability
+                </h3>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-200">
+                  Sanjivani PHC
+                </span>
+              </div>
+              <p className="text-xs text-gray-600 mt-0.5">
+                {facilityStock?.stats ? (
+                  <>
+                    <span className="text-emerald-700 font-semibold">{facilityStock.stats.medicines.inStock} meds in stock</span>
+                    {facilityStock.stats.medicines.outOfStock > 0 && (
+                      <span className="text-red-600 font-semibold ml-1.5">· {facilityStock.stats.medicines.outOfStock} out</span>
+                    )}
+                    <span className="mx-1.5 text-gray-300">|</span>
+                    <span className="text-teal-700 font-semibold">{facilityStock.stats.diagnostics.available} lab kits ready</span>
+                    {facilityStock.stats.diagnostics.outOfStock > 0 && (
+                      <span className="text-red-600 font-semibold ml-1.5">· {facilityStock.stats.diagnostics.outOfStock} unavailable</span>
+                    )}
+                  </>
+                ) : (
+                  'Live stock for Paracetamol, ORS, Amoxicillin & Malaria, Hb, Glucose kits'
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+            <button
+              onClick={() => setStockModalOpen(true)}
+              className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95"
+            >
+              <Icon name="search" size={13} />
+              Open Stock Checker →
+            </button>
+          </div>
+        </div>
+      </Card>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
 
@@ -1633,6 +1709,13 @@ export default function WorkerDashboard({
 
         </div>
       </Card>
+
+      <PhcStockCheckerModal
+        isOpen={stockModalOpen}
+        onClose={() => setStockModalOpen(false)}
+        defaultFacilityName="Sanjivani PHC"
+        userRole="worker"
+      />
 
     </div>
   );

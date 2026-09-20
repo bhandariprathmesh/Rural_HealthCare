@@ -13,6 +13,7 @@ import dashboardRoutes from './dashboard.routes.js';
 import abdmMockRoutes from './abdm.mock.routes.js';
 import emergencyRoutes from './emergency.routes.js';
 import symptomRoutes from './symptom.routes.js';
+import diagnosticRoutes from './diagnostic.routes.js';
 
 const router = Router();
 
@@ -25,6 +26,7 @@ router.use('/workers', workerRoutes);
 router.use('/consultations', consultationRoutes);
 router.use('/referrals', referralRoutes);
 router.use('/medicines', medicineRoutes);
+router.use('/diagnostics', diagnosticRoutes);
 router.use('/ai-assessments', aiRoutes);
 router.use('/dashboards', dashboardRoutes);
 router.use('/abdm/mock', abdmMockRoutes);

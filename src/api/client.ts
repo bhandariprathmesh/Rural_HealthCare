@@ -854,12 +854,87 @@ export async function updateReferralStatus(
   return res.data;
 }
 
-// ─── Medicines ───────────────────────────────────────────────────────────────
+// ─── Medicines & Pharmacy Stock ─────────────────────────────────────────────
+
+export interface MedicineItem {
+  id: string;
+  code: string;
+  name: string;
+  genericName: string;
+  brand?: string;
+  dosageForm: string;
+  strength: string;
+  category: string;
+  stock: number;
+  minStockLevel: number;
+  isLowStock: boolean;
+  batch?: string;
+  expiryDate?: string;
+  facilityId?: string;
+  facilityName?: string;
+  availability: 'In Stock' | 'Low Stock' | 'Out of Stock' | string;
+  facility?: {
+    id?: string;
+    name?: string;
+    hfrId?: string;
+    facilityType?: string;
+  };
+}
+
+export interface DiagnosticItem {
+  id: string;
+  code: string;
+  testName: string;
+  testNameHi?: string;
+  category: string;
+  kitsAvailable: number;
+  minKitsLevel: number;
+  status: 'AVAILABLE' | 'LOW_STOCK' | 'OUT_OF_STOCK';
+  batch?: string;
+  expiryDate?: string;
+  facilityId: string;
+  facilityName?: string;
+  facility?: {
+    id?: string;
+    name?: string;
+    hfrId?: string;
+    facilityType?: string;
+  };
+}
+
+export interface FacilityStockSummary {
+  facility?: {
+    id?: string;
+    name?: string;
+    hfrId?: string;
+    facilityType?: string;
+    district?: string;
+    state?: string;
+  };
+  medicines: MedicineItem[];
+  diagnosticItems: DiagnosticItem[];
+  stats: {
+    medicines: {
+      total: number;
+      inStock: number;
+      lowStock: number;
+      outOfStock: number;
+    };
+    diagnostics: {
+      total: number;
+      available: number;
+      lowStock: number;
+      outOfStock: number;
+    };
+    hasCriticalShortages: boolean;
+  };
+}
 
 export async function getMedicines(
   search?: string,
-  category?: string
-): Promise<any[]> {
+  category?: string,
+  facilityId?: string
+): Promise<MedicineItem[]> {
   const params = new URLSearchParams();
 
   if (search) {
@@ -870,19 +945,74 @@ export async function getMedicines(
     params.append('category', category);
   }
 
-  const query = params.toString()
-    ? `?${params.toString()}`
-    : '';
+  if (facilityId) {
+    params.append('facilityId', facilityId);
+  }
 
-  const res =
-    await request<
-      ApiResponse<{
-        medicines: any[];
-      }>
-    >(`/medicines${query}`);
+  const query = params.toString() ? `?${params.toString()}` : '';
+
+  const res = await request<ApiResponse<{ medicines: MedicineItem[] }>>(`/medicines${query}`);
 
   return res.data?.medicines || [];
 }
+
+export async function updateMedicineStock(
+  id: string,
+  payload: { stock: number; minStockLevel?: number; availability?: string }
+): Promise<MedicineItem> {
+  const res = await request<ApiResponse<{ medicine: MedicineItem }>>(`/medicines/${id}/stock`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+  return res.data!.medicine;
+}
+
+// ─── Diagnostic Test Kits Stock ──────────────────────────────────────────────
+
+export async function getDiagnosticItems(
+  facilityId?: string,
+  search?: string,
+  category?: string,
+  status?: string
+): Promise<DiagnosticItem[]> {
+  const params = new URLSearchParams();
+
+  if (facilityId) {
+    params.append('facilityId', facilityId);
+  }
+  if (search) {
+    params.append('search', search);
+  }
+  if (category && category !== 'ALL') {
+    params.append('category', category);
+  }
+  if (status && status !== 'ALL') {
+    params.append('status', status);
+  }
+
+  const query = params.toString() ? `?${params.toString()}` : '';
+
+  const res = await request<ApiResponse<{ diagnosticItems: DiagnosticItem[] }>>(`/diagnostics${query}`);
+
+  return res.data?.diagnosticItems || [];
+}
+
+export async function updateDiagnosticStock(
+  id: string,
+  payload: { kitsAvailable: number; status?: string; minKitsLevel?: number }
+): Promise<DiagnosticItem> {
+  const res = await request<ApiResponse<{ diagnosticItem: DiagnosticItem }>>(`/diagnostics/${id}/stock`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+  return res.data!.diagnosticItem;
+}
+
+export async function getFacilityStockSummary(facilityId: string): Promise<FacilityStockSummary> {
+  const res = await request<ApiResponse<FacilityStockSummary>>(`/medicines/facilities/${encodeURIComponent(facilityId)}/stock-summary`);
+  return res.data!;
+}
+
 
 // ─── AI ──────────────────────────────────────────────────────────────────────
 

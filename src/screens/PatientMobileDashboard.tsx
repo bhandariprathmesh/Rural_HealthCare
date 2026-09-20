@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Icon, ConsentBadge, RiskBadge, Card, PermissionBadge, RecordOwnershipBanner } from '../components/shared';
 import { getCurrentUser, getPatientDashboardData, getPatientAccessRequests, approvePatientConsent, revokePatientConsent } from '../api/client';
+import PhcStockCheckerModal from '../components/PhcStockCheckerModal';
 
 interface Props {
   navigate: (s: string) => void;
@@ -62,6 +63,7 @@ export default function PatientMobileDashboard({
   const [sosSent, setSosSent] = useState(false);
   const [showQR, setShowQR] = useState(false);
   const [showMedsModal, setShowMedsModal] = useState(false);
+  const [showStockModal, setShowStockModal] = useState(false);
   const [shareToast, setShareToast] = useState<string | null>(null);
   const [expandedConsultation, setExpandedConsultation] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -385,7 +387,7 @@ export default function PatientMobileDashboard({
         </span>
       </button>
 
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
         {[
           {
             label: 'Records',
@@ -394,10 +396,16 @@ export default function PatientMobileDashboard({
             action: () => navigate('patient-profile'),
           },
           {
-            label: 'Medicines',
+            label: 'My Meds',
             icon: 'pill',
             color: 'bg-purple-50 text-purple-700',
             action: () => setShowMedsModal(true),
+          },
+          {
+            label: 'PHC Stock',
+            icon: 'search',
+            color: 'bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-xs',
+            action: () => setShowStockModal(true),
           },
           {
             label: 'Consent',
@@ -415,10 +423,10 @@ export default function PatientMobileDashboard({
           <button
             key={item.label}
             onClick={item.action}
-            className={`flex flex-col items-center gap-1.5 p-3 rounded-2xl ${item.color} hover:opacity-80 transition-opacity`}
+            className={`flex flex-col items-center gap-1.5 p-2 sm:p-3 rounded-2xl ${item.color} hover:opacity-80 transition-opacity cursor-pointer active:scale-95`}
           >
-            <Icon name={item.icon} size={20} />
-            <span className="text-[10px] font-medium">
+            <Icon name={item.icon} size={18} />
+            <span className="text-[9px] sm:text-[10px] font-bold text-center leading-tight">
               {item.label}
             </span>
           </button>
@@ -525,6 +533,31 @@ export default function PatientMobileDashboard({
           </div>
         </Card>
       )}
+
+      {/* Bilingual PHC Stock Availability Check Banner */}
+      <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-white border border-emerald-200/80 shadow-xs flex items-center justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs mt-0.5">
+            <Icon name="pill" size={18} />
+          </div>
+          <div>
+            <div className="text-xs font-bold text-gray-900 flex items-center gap-1.5 flex-wrap">
+              <span>Check PHC Medicines & Lab Tests Before Visiting</span>
+              <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.2 rounded">Sanjivani PHC</span>
+            </div>
+            <div className="text-[11px] text-gray-600 mt-0.5">
+              अस्पताल जाने से पहले दवा (पैरासिटामोल, ओआरएस) और जांच किट (मलेरिया, शुगर) का लाइव स्टॉक देखें।
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={() => setShowStockModal(true)}
+          className="px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shrink-0 transition-colors cursor-pointer shadow-xs active:scale-95"
+        >
+          Check Stock / जांचें →
+        </button>
+      </div>
 
       <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -1037,6 +1070,14 @@ export default function PatientMobileDashboard({
           </div>
         </div>
       )}
+
+      {/* PHC Stock & Diagnostic Availability Modal */}
+      <PhcStockCheckerModal
+        isOpen={showStockModal}
+        onClose={() => setShowStockModal(false)}
+        defaultFacilityName="Sanjivani PHC"
+        userRole="patient"
+      />
     </div>
   );
 }
