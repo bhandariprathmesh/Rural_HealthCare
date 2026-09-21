@@ -82,6 +82,13 @@ enum SosStatus {
   ESCALATED
 }
 
+enum DiagnosticStatus {
+  AVAILABLE
+  LOW_STOCK
+  OUT_OF_STOCK
+  EXPIRED
+}
+
 model User {
   id           String    @id @default(uuid())
   email        String?   @unique
@@ -123,6 +130,7 @@ model Facility {
   emergencyLogs       EmergencyAccessLog[]
   consentArtifacts    ConsentArtifact[]
   medicines           Medicine[]
+  diagnosticItems     DiagnosticItem[]
   sosAlerts           SosAlert[]
   appointments        Appointment[]
 }
@@ -485,6 +493,25 @@ model Medicine {
   isDemo        Boolean   @default(true)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+}
+
+model DiagnosticItem {
+  id            String           @id @default(uuid())
+  code          String           @unique
+  testName      String
+  testNameHi    String?
+  category      String           @default("Rapid Diagnostic")
+  kitsAvailable Int              @default(0)
+  minKitsLevel  Int              @default(10)
+  status        DiagnosticStatus @default(AVAILABLE)
+  batch         String?
+  expiryDate    String?
+  facilityId    String
+  facility      Facility         @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  facilityName  String?
+  isDemo        Boolean          @default(true)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
 }
 
 model SyncRecord {

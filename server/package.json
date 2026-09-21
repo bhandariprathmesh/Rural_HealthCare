@@ -12,7 +12,8 @@
     "prisma:push": "prisma db push",
     "prisma:seed": "tsx prisma/seed.ts",
     "prisma:studio": "prisma studio",
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx prisma/seed.ts",
+    "seed:demo": "node seed_demo_users.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

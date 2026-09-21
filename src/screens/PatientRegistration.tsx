@@ -103,9 +103,8 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
       )
       return
     }
-    setIsSubmitting(true)
-    let payload: any = null
-
+    setIsSubmitting(true);
+    let payload: any = null;
     try {
       const cleanPhone = form.phone.replace(/\D/g, "").slice(-10)
 
@@ -120,13 +119,13 @@ export default function PatientRegistration({ navigate, isOffline }: Props) {
       )
 
       const parseList = (str: string) => {
-        const trimmed = str.trim()
-        if (!trimmed || trimmed.toLowerCase() === "none") return []
+        const trimmed = str.trim();
+        if (!trimmed || trimmed.toLowerCase() === "none") return [];
         return trimmed
           .split(",")
           .map((s) => s.trim())
-          .filter(Boolean)
-      }
+          .filter(Boolean);
+      };
       payload = {
         name: form.name.trim(),
 

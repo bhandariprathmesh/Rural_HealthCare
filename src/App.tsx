@@ -23,6 +23,7 @@ import OfflineMode from './screens/OfflineMode';
 import SyncCenter from './screens/SyncCenter';
 import PatientMobileDashboard from './screens/PatientMobileDashboard';
 import AdminDashboard from './screens/AdminDashboard';
+import PhcStockCheckerModal from './components/PhcStockCheckerModal';
 import TeleconsultationRoom from './screens/TeleconsultationRoom';
 
 interface NavItem {
@@ -112,6 +113,11 @@ const NAV: Record<Role, NavItem[]> = {
       icon: 'share',
     },
     {
+      id: 'phc-stock',
+      label: 'PHC Stock',
+      icon: 'pill',
+    },
+    {
       id: 'offline',
       label: 'Offline Mode',
       icon: 'wifi_off',
@@ -138,6 +144,11 @@ const NAV: Record<Role, NavItem[]> = {
       id: 'doctor-patient-view',
       label: 'Patient View',
       icon: 'user',
+    },
+    {
+      id: 'phc-stock',
+      label: 'PHC Stock',
+      icon: 'pill',
     },
     {
       id: 'health-assessment',
@@ -204,6 +215,11 @@ const NAV: Record<Role, NavItem[]> = {
       id: 'admin-dashboard',
       label: 'Dashboard',
       icon: 'chart',
+    },
+    {
+      id: 'phc-stock',
+      label: 'PHC Stock',
+      icon: 'pill',
     },
   ],
 };
@@ -1442,6 +1458,39 @@ export default function App() {
               }
             />
           )}
+          {screen === 'phc-stock' && (
+            <div className="p-4 sm:p-8 max-w-5xl mx-auto min-h-full">
+              <PhcStockCheckerModal
+                isOpen={true}
+                onClose={() => {
+                  const fallback =
+                    role === 'doctor'
+                      ? 'doctor-dashboard'
+                      : role === 'worker'
+                      ? 'worker-dashboard'
+                      : role === 'admin'
+                      ? 'admin-dashboard'
+                      : 'patient-dashboard';
+                  navigate(fallback);
+                }}
+                defaultFacilityId={
+                  currentUser?.doctorProfile?.facility?.id ||
+                  (currentUser?.workerProfile?.assignedPhc?.toLowerCase().includes('lunkaransar')
+                    ? 'HFR-2024-00891'
+                    : 'HFR-2024-SANJIVANI')
+                }
+                defaultFacilityName={
+                  currentUser?.doctorProfile?.facility?.name ||
+                  currentUser?.workerProfile?.assignedPhc ||
+                  'Sanjivani PHC'
+                }
+                userRole={
+                  role === 'doctor' ? 'doctor' : role === 'admin' ? 'admin' : 'worker'
+                }
+              />
+            </div>
+          )}
+
           </ErrorBoundary>
         </main>
       </div>
