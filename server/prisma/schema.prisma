@@ -48,6 +48,20 @@ enum ReferralPriority {
   EMERGENCY
 }
 
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum AppointmentPriority {
+  ROUTINE
+  URGENT
+  HIGH_RISK
+}
+
 enum DutyStatus {
   AVAILABLE
   BUSY
@@ -72,6 +86,7 @@ enum DiagnosticStatus {
   AVAILABLE
   LOW_STOCK
   OUT_OF_STOCK
+  EXPIRED
 }
 
 model User {
@@ -117,6 +132,7 @@ model Facility {
   medicines           Medicine[]
   diagnosticItems     DiagnosticItem[]
   sosAlerts           SosAlert[]
+  appointments        Appointment[]
 }
 
 model Doctor {
@@ -132,6 +148,7 @@ model Doctor {
   distance              String?
   isPreferred           Boolean     @default(false)
   recommendationReasons String[]
+  slotCapacity          Int         @default(3)
   isDemo                Boolean     @default(false)
   createdAt             DateTime    @default(now())
   updatedAt             DateTime    @updatedAt
@@ -142,6 +159,7 @@ model Doctor {
   emergencyAccessLogs   EmergencyAccessLog[]
   targetReferrals       Referral[]
   familyPatients        Patient[]                  @relation("PatientFamilyDoctor")
+  appointments          Appointment[]
 }
 
 model Worker {
@@ -209,6 +227,33 @@ model Patient {
   emergencyAccessLogs EmergencyAccessLog[]
   sosAlerts           SosAlert[]
   aiAssessments       AIAssessment[]
+  appointments        Appointment[]
+}
+
+model Appointment {
+  id               String              @id @default(uuid())
+  tokenNumber      Int
+  appointmentCode  String              @unique
+  patientId        String
+  patient          Patient             @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorId         String
+  doctor           Doctor              @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  facilityId       String
+  facility         Facility            @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  scheduledDate    String              // "YYYY-MM-DD"
+  timeSlot         String              // e.g. "10:00 AM - 10:30 AM"
+  status           AppointmentStatus   @default(CONFIRMED)
+  priority         AppointmentPriority @default(ROUTINE)
+  reason           String?
+  notes            String?
+  source           String?             @default("PATIENT") // PATIENT, ASHA, REFERRAL
+  bookedByWorkerId String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  @@index([doctorId, scheduledDate])
+  @@index([facilityId, scheduledDate])
+  @@index([patientId])
 }
 
 model Consultation {

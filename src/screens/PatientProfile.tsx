@@ -25,7 +25,7 @@ import {
 } from '../api/client';
 
 interface Props {
-  navigate: (s: string) => void;
+  navigate: (s: string, patientId?: string) => void;
   patientId?: string | null;
   currentUser?: any;
   autoOpenEdit?: boolean;
@@ -126,12 +126,19 @@ export default function PatientProfile({
       const targetId = selectedPatient.healthId || selectedPatient.id;
       const res = await getPatientByHealthId(targetId);
       if (res?.patient) {
+        const userRole = String(currentUser?.role || propUser?.role || '').toLowerCase();
+        const userIsPatient = userRole === 'patient';
+        const accessAllowed = userIsPatient || (res.hasAccess !== false && res.patient.hasAccess !== false);
+
         setPatient({
           ...res.patient,
           id: res.patient.healthId || res.patient.id,
+          hasAccess: accessAllowed,
+          pendingRequest: res.pendingRequest || res.patient.pendingRequest || null,
+          activeConsent: res.activeConsent || res.patient.activeConsent || null,
         });
-        setConsultations(mapConsultations(res.consultations, res.patient));
-        setReferrals(mapReferrals(res.referrals, res.patient));
+        setConsultations(accessAllowed ? mapConsultations(res.consultations, res.patient) : []);
+        setReferrals(accessAllowed ? mapReferrals(res.referrals, res.patient) : []);
         setAuditLogs(res.patient.auditEntries || []);
       }
     } catch (err) {
@@ -208,13 +215,17 @@ export default function PatientProfile({
           const res = await getPatientByHealthId(targetPatientId).catch(() => null);
 
           if (res?.patient) {
+            const accessAllowed = userIsPatient || (res.hasAccess !== false && res.patient.hasAccess !== false);
             if (mounted) {
               setPatient({
                 ...res.patient,
                 id: res.patient.healthId || res.patient.id,
+                hasAccess: accessAllowed,
+                pendingRequest: res.pendingRequest || res.patient.pendingRequest || null,
+                activeConsent: res.activeConsent || res.patient.activeConsent || null,
               });
-              setConsultations(mapConsultations(res.consultations, res.patient));
-              setReferrals(mapReferrals(res.referrals, res.patient));
+              setConsultations(accessAllowed ? mapConsultations(res.consultations, res.patient) : []);
+              setReferrals(accessAllowed ? mapReferrals(res.referrals, res.patient) : []);
               setAuditLogs(res.patient.auditEntries || []);
             }
             // Fetch doctor consent entries for the Access tab
@@ -283,14 +294,21 @@ export default function PatientProfile({
 
   // Auto-open edit modal if requested
   useEffect(() => {
-    if (autoOpenEdit && patient && !isEditing) {
+    const userRole = String(currentUser?.role || propUser?.role || '').toLowerCase();
+    const canEdit = userRole === 'patient' || patient?.hasAccess !== false;
+    if (autoOpenEdit && patient && !isEditing && canEdit) {
       handleOpenEdit();
     }
-  }, [autoOpenEdit, patient]);
+  }, [autoOpenEdit, patient, currentUser, propUser]);
 
   // Sync editForm when patient is loaded or editing opens
   function handleOpenEdit() {
     if (!patient) return;
+    const userRole = String(currentUser?.role || propUser?.role || '').toLowerCase();
+    if (userRole !== 'patient' && patient.hasAccess === false) {
+      alert('Patient consent required to edit protected health records.');
+      return;
+    }
     setEditForm({
       bloodGroup: patient.bloodGroup || '',
       allergies: Array.isArray(patient.allergies) ? patient.allergies.join(', ') : (patient.allergies || ''),
@@ -572,6 +590,7 @@ export default function PatientProfile({
     .map((w: string) => w[0] || '')
     .join('')
     .toUpperCase();
+  const hasAccess = isPatientUser || (patient.hasAccess === true);
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-5">
@@ -607,13 +626,20 @@ export default function PatientProfile({
             {isPatientUser ? 'My Health Profile (Self)' : currentUser?.role === 'doctor' ? 'Doctor View' : 'ASHA Worker View'}
           </div>
 
-          <button
-            onClick={handleOpenEdit}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
-          >
-            <Icon name="edit" size={12} />
-            Edit Profile
-          </button>
+          {!hasAccess ? (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 border border-amber-300 text-amber-900 rounded-xl text-[10px] font-bold uppercase tracking-wider">
+              <Icon name="lock" size={12} />
+              Access Restricted
+            </div>
+          ) : (
+            <button
+              onClick={handleOpenEdit}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+            >
+              <Icon name="edit" size={12} />
+              Edit Profile
+            </button>
+          )}
         </div>
       </div>
 
@@ -761,7 +787,11 @@ export default function PatientProfile({
             <Icon name="check" size={16} className="text-emerald-600 shrink-0" />
             <span>
               <strong>Consent Active:</strong> Granted to <em>{patient.activeConsent.grantedTo}</em> · Scope:{' '}
-              {Array.isArray(patient.activeConsent.dataScope) ? patient.activeConsent.join(', ') : 'Clinical Records'}
+              {Array.isArray(patient.activeConsent.dataScope)
+                ? patient.activeConsent.dataScope.join(', ')
+                : typeof patient.activeConsent.dataScope === 'string'
+                ? patient.activeConsent.dataScope
+                : 'Clinical Records'}
             </span>
           </div>
           <div className="flex items-center gap-2 text-[11px] text-emerald-700">
@@ -777,7 +807,7 @@ export default function PatientProfile({
 
       {/* Primary Patient Card */}
       <Card className="overflow-hidden">
-        <div className="bg-gradient-to-r from-brand-700 to-brand-600 px-6 py-5 text-white">
+        <div className={`px-6 py-5 text-white ${hasAccess ? 'bg-gradient-to-r from-brand-700 to-brand-600' : 'bg-gradient-to-r from-teal-800 to-teal-700'}`}>
           <div className="flex items-start gap-4">
             <div className="w-16 h-16 rounded-2xl bg-white/20 flex items-center justify-center text-2xl font-display font-bold shrink-0">
               {initials}
@@ -795,48 +825,81 @@ export default function PatientProfile({
                 <span>
                   {patient.age} yrs · {patient.gender === 'F' || patient.gender === 'Female' ? 'Female' : 'Male'}
                 </span>
-                <span>
-                  Blood: <strong className="text-white">{patient.bloodGroup || 'Not Specified'}</strong>
-                </span>
+                {hasAccess && patient.bloodGroup && (
+                  <span>
+                    Blood: <strong className="text-white">{patient.bloodGroup}</strong>
+                  </span>
+                )}
                 <span className="font-mono text-xs bg-white/10 px-2 py-0.5 rounded">
                   {patient.healthId || patient.id}
                 </span>
               </div>
 
               <div className="flex items-center gap-2 mt-2 flex-wrap">
-                <RiskBadge
-                  level={
-                    patient.riskLevel
-                      ? typeof patient.riskLevel === 'string'
-                        ? patient.riskLevel.toLowerCase()
-                        : patient.riskLevel
-                      : 'low'
-                  }
-                />
-                {patient.consentStatus && <ConsentBadge status={patient.consentStatus} />}
-                {patient.vaccinationStatus && (
-                  <span className="px-2.5 py-1 bg-white/10 text-white text-xs rounded-full">
-                    {patient.vaccinationStatus}
+                {!hasAccess ? (
+                  <span className="px-2.5 py-1 bg-white/15 border border-white/20 text-white text-xs rounded-full font-medium flex items-center gap-1">
+                    <Icon name="shield" size={11} /> Basic Demographics Only
                   </span>
+                ) : (
+                  <>
+                    <RiskBadge
+                      level={
+                        patient.riskLevel
+                          ? typeof patient.riskLevel === 'string'
+                            ? patient.riskLevel.toLowerCase()
+                            : patient.riskLevel
+                          : 'low'
+                      }
+                    />
+                    {patient.consentStatus && <ConsentBadge status={patient.consentStatus} />}
+                    {patient.vaccinationStatus && (
+                      <span className="px-2.5 py-1 bg-white/10 text-white text-xs rounded-full">
+                        {patient.vaccinationStatus}
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2 shrink-0">
-              <button
-                onClick={handleOpenEdit}
-                className="px-3 py-2 bg-white/10 text-white border border-white/20 rounded-xl text-xs font-semibold hover:bg-white/20 transition-colors flex items-center gap-1.5"
-              >
-                <Icon name="edit" size={12} />
-                Edit
-              </button>
+              {hasAccess ? (
+                <>
+                  <button
+                    onClick={handleOpenEdit}
+                    className="px-3 py-2 bg-white/10 text-white border border-white/20 rounded-xl text-xs font-semibold hover:bg-white/20 transition-colors flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Icon name="edit" size={12} />
+                    Edit
+                  </button>
 
-              {!isPatientUser && (
+                  {isDoctorUser && (
+                    <button
+                      onClick={() => navigate('teleconsultation', patient.healthId || patient.id)}
+                      className="px-3.5 py-2 bg-teal-500 hover:bg-teal-600 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      title="Start 1-to-1 Video Call with this patient"
+                    >
+                      <Icon name="video" size={13} />
+                      Video Call Patient
+                    </button>
+                  )}
+
+                  {!isPatientUser && (
+                    <button
+                      onClick={() => navigate('health-assessment')}
+                      className="px-4 py-2 bg-white text-brand-700 rounded-xl text-xs font-semibold hover:bg-brand-50 transition-colors cursor-pointer"
+                    >
+                      + Assessment
+                    </button>
+                  )}
+                </>
+              ) : (
                 <button
-                  onClick={() => navigate('health-assessment')}
-                  className="px-4 py-2 bg-white text-brand-700 rounded-xl text-xs font-semibold hover:bg-brand-50 transition-colors"
+                  onClick={() => setShowAccessModal(true)}
+                  className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
                 >
-                  + Assessment
+                  <Icon name="key" size={12} />
+                  Request Access
                 </button>
               )}
             </div>
@@ -851,26 +914,35 @@ export default function PatientProfile({
             {patient.district ? `, ${patient.district}` : ''}
           </span>
 
-          <span className="flex items-center gap-1">
-            <Icon name="phone" size={11} className="text-gray-400" />
-            {patient.phone}
-          </span>
-
-          {patient.emergencyContact?.name && (
-            <span>
-              Emergency: <strong>{patient.emergencyContact.name}</strong> ({patient.emergencyContact.relation || 'Relation'}) {patient.emergencyContact.phone}
+          {hasAccess && patient.phone && (
+            <span className="flex items-center gap-1">
+              <Icon name="phone" size={11} className="text-gray-400" />
+              {patient.phone}
             </span>
           )}
 
-          {(patient.familyDoctorName || patient.familyDoctor?.name) && (
+          {hasAccess && patient.emergencyContact && typeof patient.emergencyContact === 'object' && patient.emergencyContact.name && (
+            <span>
+              Emergency: <strong>{patient.emergencyContact.name}</strong> ({patient.emergencyContact.relation || 'Relation'}) {patient.emergencyContact.phone || ''}
+            </span>
+          )}
+
+          {hasAccess && (patient.familyDoctorName || patient.familyDoctor?.name) && (
             <span className="text-blue-700 font-medium">
               Family Doctor: <strong>{patient.familyDoctorName || patient.familyDoctor?.name}</strong>
             </span>
           )}
 
-          {(patient.healthWorkerName || patient.healthWorker?.name || (typeof patient.healthWorker === 'string' && patient.healthWorker)) && (
+          {hasAccess && (patient.healthWorkerName || patient.healthWorker?.name || (typeof patient.healthWorker === 'string' && patient.healthWorker)) && (
             <span>
               ASHA Worker: <strong>{patient.healthWorkerName || patient.healthWorker?.name || patient.healthWorker}</strong>
+            </span>
+          )}
+
+          {!hasAccess && (
+            <span className="text-amber-700 font-medium flex items-center gap-1">
+              <Icon name="lock" size={11} className="text-amber-600" />
+              Clinical history, medications, and vitals locked until patient authorization
             </span>
           )}
 
@@ -880,7 +952,122 @@ export default function PatientProfile({
         </div>
       </Card>
 
-      <Tabs tabs={PROFILE_TABS} active={activeTab} onChange={setActiveTab} />
+      {!hasAccess ? (
+        <Card className="p-8 border-2 border-dashed border-amber-300 bg-gradient-to-b from-amber-50/40 to-white text-center space-y-5">
+          <div className="w-16 h-16 rounded-3xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto shadow-sm">
+            <Icon name="lock" size={32} />
+          </div>
+
+          <div className="max-w-lg mx-auto space-y-2">
+            <div className="flex items-center justify-center gap-2">
+              <h2 className="font-display font-bold text-gray-900 text-lg">
+                Patient Overview & Clinical Data Locked
+              </h2>
+              <span className="px-2.5 py-0.5 bg-amber-200 text-amber-900 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                Protected Health Record
+              </span>
+            </div>
+            <p className="text-xs text-gray-600 leading-relaxed">
+              Under DPDP Act & ABDM regulations, you do not have active patient-approved consent to view the clinical overview, medical history, consultations, medications, or vitals for <strong>{patient.name}</strong>.
+            </p>
+          </div>
+
+          {patient.pendingRequest ? (
+            <div className="max-w-lg mx-auto p-5 bg-amber-50/90 border border-amber-300 rounded-2xl text-left space-y-3 shadow-xs">
+              <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-amber-200/80">
+                <div className="flex items-center gap-2 text-xs font-bold text-amber-900 uppercase tracking-wider">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-ping" />
+                  Access Request Pending Patient Approval
+                </div>
+                <span className="text-[11px] font-semibold text-amber-800 bg-amber-200/80 px-2.5 py-1 rounded-full">
+                  Awaiting Patient Authorization
+                </span>
+              </div>
+
+              <div className="text-xs text-gray-700 space-y-1.5 font-mono">
+                {patient.pendingRequest.consentCode && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-500 font-sans">Request Code:</span>
+                    <span className="font-semibold">{patient.pendingRequest.consentCode}</span>
+                  </div>
+                )}
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-gray-500 font-sans shrink-0">Purpose:</span>
+                  <span className="text-right font-sans">{patient.pendingRequest.purpose || 'Routine health check and clinical history review'}</span>
+                </div>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-gray-500 font-sans shrink-0">Requested Scope:</span>
+                  <span className="text-right font-sans font-medium text-amber-950">
+                    {Array.isArray(patient.pendingRequest.dataScope) ? patient.pendingRequest.dataScope.join(', ') : 'Basic Info & Consultation History'}
+                  </span>
+                </div>
+                {patient.pendingRequest.createdAt && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-gray-500 font-sans">Submitted:</span>
+                    <span>{new Date(patient.pendingRequest.createdAt).toLocaleString('en-IN')}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-2 border-t border-amber-200 text-[11px] text-amber-800 flex items-center justify-between flex-wrap gap-2">
+                <span>The patient can authorize this request directly on their RuralCare mobile dashboard.</span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setLoading(true);
+                    try {
+                      const targetId = patient.healthId || patient.id;
+                      const res = await getPatientByHealthId(targetId);
+                      if (res?.patient) {
+                        const accessAllowed = isPatientUser || (res.hasAccess !== false && res.patient.hasAccess !== false);
+                        setPatient({
+                          ...res.patient,
+                          id: res.patient.healthId || res.patient.id,
+                          hasAccess: accessAllowed,
+                          pendingRequest: res.pendingRequest || res.patient.pendingRequest || null,
+                          activeConsent: res.activeConsent || res.patient.activeConsent || null,
+                        });
+                        if (accessAllowed) {
+                          setConsultations(mapConsultations(res.consultations, res.patient));
+                          setReferrals(mapReferrals(res.referrals, res.patient));
+                          setAuditLogs(res.patient.auditEntries || []);
+                        }
+                      }
+                    } catch {
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                >
+                  <Icon name="sync" size={12} />
+                  Check Status / Refresh
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="max-w-md mx-auto p-5 bg-white border border-gray-200 rounded-2xl text-center space-y-3 shadow-xs">
+              <p className="text-xs text-gray-600">
+                To view this patient's clinical overview, vitals, prescriptions, and medical history, send a digital access request for the patient to approve.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAccessModal(true);
+                  setAccessError('');
+                  setAccessSuccess('');
+                }}
+                className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs inline-flex items-center gap-2 shadow-sm transition-all cursor-pointer"
+              >
+                <Icon name="key" size={14} />
+                Request Patient Access
+              </button>
+            </div>
+          )}
+        </Card>
+      ) : (
+        <>
+          <Tabs tabs={PROFILE_TABS} active={activeTab} onChange={setActiveTab} />
 
       {/* OVERVIEW TAB */}
       {activeTab === 'overview' && (
@@ -965,7 +1152,7 @@ export default function PatientProfile({
               </div>
 
               <div className="space-y-3">
-                {patient.allergies?.length > 0 ? (
+                {Array.isArray(patient.allergies) && patient.allergies.length > 0 ? (
                   <div>
                     <div className="text-xs font-semibold text-red-600 mb-2 flex items-center gap-1">
                       <Icon name="alert" size={12} />
@@ -992,7 +1179,7 @@ export default function PatientProfile({
                     CHRONIC CONDITIONS
                   </div>
 
-                  {patient.chronicConditions?.length > 0 ? (
+                  {Array.isArray(patient.chronicConditions) && patient.chronicConditions.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
                       {patient.chronicConditions.map((c: string) => (
                         <span
@@ -1013,13 +1200,13 @@ export default function PatientProfile({
             <Card className="p-5">
               <SectionHeader title="Health Timeline" sub="Chronological record of care" />
               <div className="mt-4">
-                {consultations.length > 0 ? (
+                {Array.isArray(consultations) && consultations.length > 0 ? (
                   consultations.map((c) => (
                     <TimelineEntry
                       key={c.id}
-                      date={`${c.date}${c.time ? ', ' + c.time : ''}`}
+                      date={`${c.date || ''}${c.time ? ', ' + c.time : ''}`}
                       title={`Consultation – ${c.diagnosis || 'Assessment recorded'}`}
-                      sub={c.notes || `Recorded by ${c.workerName}`}
+                      sub={c.notes || (c.workerName ? `Recorded by ${c.workerName}` : 'Recorded')}
                       icon="clipboard"
                       color="brand"
                     />
@@ -1052,7 +1239,7 @@ export default function PatientProfile({
               />
 
               <div className="space-y-2.5 mt-3">
-                {patient.currentMedications?.length > 0 ? (
+                {Array.isArray(patient.currentMedications) && patient.currentMedications.length > 0 ? (
                   patient.currentMedications.map((m: string, i: number) => (
                     <div key={i} className="flex items-start gap-2.5 p-3 bg-brand-50 rounded-xl">
                       <Icon name="pill" size={14} className="text-brand-600 shrink-0 mt-0.5" />
@@ -1070,11 +1257,11 @@ export default function PatientProfile({
             <Card className="p-5">
               <SectionHeader
                 title="Last Vitals"
-                sub={consultations[0]?.date || 'No vitals recorded'}
+                sub={consultations?.[0]?.date || 'No vitals recorded'}
                 action={<PermissionBadge type="asha-recorded" />}
               />
 
-              {consultations[0]?.vitals && Object.keys(consultations[0].vitals).length > 0 ? (
+              {consultations?.[0]?.vitals && typeof consultations[0].vitals === 'object' && Object.keys(consultations[0].vitals).length > 0 ? (
                 <div className="space-y-2 mt-3">
                   {Object.entries(consultations[0].vitals).map(([k, v]: any) => (
                     <div
@@ -1082,7 +1269,9 @@ export default function PatientProfile({
                       className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0"
                     >
                       <span className="text-xs text-gray-500 capitalize">{k}</span>
-                      <span className="font-mono text-sm font-semibold text-gray-800">{String(v)}</span>
+                      <span className="font-mono text-sm font-semibold text-gray-800">
+                        {typeof v === 'object' ? JSON.stringify(v) : String(v ?? '')}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -1244,7 +1433,7 @@ export default function PatientProfile({
           />
 
           <div className="space-y-3 mt-3">
-            {patient.currentMedications?.length > 0 ? (
+            {Array.isArray(patient.currentMedications) && patient.currentMedications.length > 0 ? (
               patient.currentMedications.map((m: string, i: number) => (
                 <div key={i} className="flex items-center gap-3 p-3 border border-gray-100 rounded-xl">
                   <div className="w-9 h-9 bg-brand-50 rounded-xl flex items-center justify-center">
@@ -1484,6 +1673,8 @@ export default function PatientProfile({
           <p className="text-xs text-gray-400 mt-1">Records will appear here as consultations are completed</p>
         </Card>
       )}
+    </>
+  )}
 
       {/* EDIT PROFILE MODAL */}
       {isEditing && (
