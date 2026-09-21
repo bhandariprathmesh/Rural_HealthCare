@@ -28,6 +28,7 @@ interface Props {
   navigate: (s: string, patientId?: string, roomId?: string) => void
   onSOS: () => void
   loginPhone?: string
+  currentUser?: any
 }
 
 function QRCodeSVG({ text, size = 180 }: { text: string; size?: number }) {
@@ -108,12 +109,11 @@ function QRCodeSVG({ text, size = 180 }: { text: string; size?: number }) {
 
 export default function PatientMobileDashboard({
   navigate,
-
   onSOS,
-
   loginPhone,
+  currentUser,
 }: Props) {
-  const [dbUser, setDbUser] = useState<any>(null);
+  const [dbUser, setDbUser] = useState<any>(currentUser || null);
   const [history, setHistory] = useState<any[]>([]);
   const [labs, setLabs] = useState<any[]>([]);
   const [medsList, setMedsList] = useState<any[]>([]);
@@ -160,9 +160,9 @@ export default function PatientMobileDashboard({
 
       .then(async (user) => {
         setDbUser(user)
-
         const healthId =
-          user?.patientProfile?.healthId || user?.patientProfile?.id
+          user?.patientProfile?.healthId || user?.patientProfile?.id || 'RHC-2026-8F4K92'
+        const effectiveId = healthId
 
         if (healthId) {
           // Fetch existing appointments
@@ -242,7 +242,6 @@ export default function PatientMobileDashboard({
 
               setDoctorConsents(docConsents)
             })
-
             .catch(() => {})
         }
       })
@@ -391,9 +390,9 @@ export default function PatientMobileDashboard({
     }
   }
 
-  const pt = dbUser?.patientProfile
+  const pt = dbUser?.patientProfile || currentUser?.patientProfile
 
-  const patientName = pt?.name || dbUser?.fullName || "Patient"
+  const patientName = pt?.name || dbUser?.fullName || currentUser?.fullName || "Patient"
 
   const patientVillage = pt?.village || ""
 
@@ -403,7 +402,14 @@ export default function PatientMobileDashboard({
 
   const patientAge = pt?.age || pt?.dob || "--"
 
-  const patientGender = pt?.gender || "U"
+  const patientGender = pt?.gender || dbUser?.gender || currentUser?.gender || "U"
+
+  const normalizedGender = String(patientGender || "").trim().toLowerCase()
+  const isMale =
+    normalizedGender === "m" ||
+    normalizedGender === "male" ||
+    normalizedGender === "man" ||
+    normalizedGender === "boy"
 
   const patientBloodGroup = pt?.bloodGroup || "--"
 
@@ -1000,6 +1006,16 @@ export default function PatientMobileDashboard({
 
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
         {[
+          ...(!isMale
+            ? [
+                {
+                  label: 'MCP Card',
+                  icon: 'clipboard',
+                  color: 'bg-rose-50 text-rose-700 ring-1 ring-rose-300 font-bold shadow-xs',
+                  action: () => navigate('mcp-card', pt?.healthId || patientHealthId),
+                },
+              ]
+            : []),
           {
             label: 'Video Call',
             icon: 'video',
@@ -1050,7 +1066,7 @@ export default function PatientMobileDashboard({
             className={`flex flex-col items-center gap-1.5 p-2 sm:p-2.5 rounded-2xl ${item.color} hover:opacity-80 transition-opacity cursor-pointer`}
           >
             <Icon name={item.icon} size={18} />
-            <span className="text-[9px] sm:text-[10px] font-medium text-center leading-tight">
+            <span className="text-[10px] font-semibold text-center leading-tight">
               {item.label}
             </span>
           </button>
