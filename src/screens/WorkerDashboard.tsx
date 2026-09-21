@@ -1013,6 +1013,14 @@ export default function WorkerDashboard({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setStockModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+          >
+            <Icon name="pill" size={13} className="text-emerald-700" />
+            PHC Stock
+          </button>
 
           {isOffline && (
             <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 font-semibold flex items-center gap-2">
@@ -1125,7 +1133,7 @@ export default function WorkerDashboard({
         </div>
       </Card>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
 
         {[
           {

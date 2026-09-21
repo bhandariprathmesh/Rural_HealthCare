@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "format": "oxfmt",
+    "server": "npm --prefix server run dev",
     "prisma:generate": "npm --prefix server run prisma:generate",
     "prisma:migrate": "npm --prefix server run prisma:migrate",
     "prisma:push": "npm --prefix server run prisma:push"

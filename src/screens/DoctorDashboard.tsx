@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { StatCard, RiskBadge, PriorityBadge, ReferralBadge, Card, SectionHeader, Icon, HPRBadge, HFRBadge, ABDMLayerLegend } from '../components/shared';
 import { getDoctorDashboardData, updateDoctorDutyStatus, getCurrentUser } from '../api/client';
+import PhcStockCheckerModal from '../components/PhcStockCheckerModal';
 
 interface SOSAlert {
   id: string; from: string; role: string; patientId: string; location: string;
@@ -37,6 +38,7 @@ export default function DoctorDashboard({ navigate, sosAlerts = [], onDismissSOS
   const [isLive, setIsLive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [dbUser, setDbUser] = useState<any>(null);
+  const [stockModalOpen, setStockModalOpen] = useState(false);
 
   const [dashboardStats, setDashboardStats] = useState<any>(null);
 
@@ -164,6 +166,14 @@ export default function DoctorDashboard({ navigate, sosAlerts = [], onDismissSOS
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setStockModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+          >
+            <Icon name="pill" size={13} className="text-emerald-700" />
+            PHC Stock
+          </button>
           <button onClick={() => navigate('doctor-sos-inbox')}
             className="flex items-center gap-1.5 px-3 py-2 bg-red-100 hover:bg-red-200 text-red-800 border border-red-300 rounded-xl text-xs font-bold transition-colors">
             <span className="w-2 h-2 rounded-full bg-red-600 animate-pulse" />
@@ -514,6 +524,13 @@ export default function DoctorDashboard({ navigate, sosAlerts = [], onDismissSOS
           </Card>
         </div>
       </div>
+
+      <PhcStockCheckerModal
+        isOpen={stockModalOpen}
+        onClose={() => setStockModalOpen(false)}
+        defaultFacilityName={doctorProfile?.facility?.name || 'Sanjivani PHC'}
+        userRole="doctor"
+      />
     </div>
   );
 }

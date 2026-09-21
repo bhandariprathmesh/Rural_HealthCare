@@ -3,6 +3,7 @@ import {
   getMedicines,
   getMedicineById,
   updateMedicineStock,
+  createMedicine,
   getFacilityStockSummary,
 } from '../controllers/medicine.controller.js';
 
@@ -10,6 +11,9 @@ const router = Router();
 
 // GET /api/v1/medicines - list medicines
 router.get('/', getMedicines);
+
+// POST /api/v1/medicines - add medicine to inventory
+router.post('/', createMedicine);
 
 // GET /api/v1/medicines/facilities/:facilityId/stock-summary - facility stock overview
 router.get('/facilities/:facilityId/stock-summary', getFacilityStockSummary);

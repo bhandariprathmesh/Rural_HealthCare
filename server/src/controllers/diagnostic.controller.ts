@@ -30,7 +30,21 @@ export async function getDiagnosticItems(req: Request, res: Response, next: Next
     }
 
     if (facilityId) {
-      where.facilityId = facilityId;
+      const targetFac = await prisma.facility.findFirst({
+        where: {
+          OR: [
+            { id: facilityId },
+            { hfrId: { equals: facilityId, mode: 'insensitive' as const } },
+            { name: { contains: facilityId, mode: 'insensitive' as const } },
+            ...(facilityId.toLowerCase().includes('sanjivani') ? [{ name: { contains: 'sanjivani', mode: 'insensitive' as const } }] : []),
+          ],
+        },
+      });
+      if (targetFac) {
+        where.facilityId = targetFac.id;
+      } else {
+        where.facilityId = facilityId;
+      }
     }
 
     if (status && status !== 'ALL') {
@@ -169,7 +183,24 @@ export async function createDiagnosticItem(req: Request, res: Response, next: Ne
       throw new AppError('code, testName, and facilityId are required', 400);
     }
 
-    const facility = await prisma.facility.findUnique({ where: { id: facilityId } });
+    let facility = await prisma.facility.findFirst({
+      where: {
+        OR: [
+          { id: facilityId },
+          { hfrId: { equals: facilityId, mode: 'insensitive' as const } },
+          { name: { contains: facilityId, mode: 'insensitive' as const } },
+          ...(facilityId.toLowerCase().includes('sanjivani') ? [{ name: { contains: 'sanjivani', mode: 'insensitive' as const } }] : []),
+        ],
+      },
+    });
+    if (!facility) {
+      facility = await prisma.facility.findFirst({
+        where: { name: { contains: 'sanjivani', mode: 'insensitive' } },
+      });
+    }
+    if (!facility) {
+      facility = await prisma.facility.findFirst();
+    }
     if (!facility) {
       throw new AppError(`Facility '${facilityId}' not found`, 404);
     }
@@ -194,7 +225,7 @@ export async function createDiagnosticItem(req: Request, res: Response, next: Ne
         status: initialStatus,
         batch,
         expiryDate,
-        facilityId,
+        facilityId: facility.id,
         facilityName: facility.name,
       },
       include: { facility: true },
