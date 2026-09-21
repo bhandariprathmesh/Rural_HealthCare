@@ -27,7 +27,12 @@ const bookAppointmentSchema = z.object({
 async function resolvePatient(identifier: string) {
   return await prisma.patient.findFirst({
     where: {
-      OR: [{ id: identifier }, { healthId: identifier }],
+      OR: [
+        { id: identifier },
+        { healthId: identifier },
+        { userId: identifier },
+        { abhaAddress: identifier },
+      ],
     },
   })
 }

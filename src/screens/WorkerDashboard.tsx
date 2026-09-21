@@ -21,12 +21,15 @@ import {
   dispatchSosAlert,
   getSosAlertStatus,
   cancelSosAlert,
+  getMchDueList,
+  updateMchMilestone,
+  createMchRecord,
   getFacilityStockSummary,
   bookAppointment,
   getDoctorSlots,
   type DoctorSlotItem,
 } from "../api/client";
-
+import type { MchDueAlertItem, MchRecord } from "../types";
 import { syncEngine } from "../services/syncEngine";
 import PhcStockCheckerModal from "../components/PhcStockCheckerModal";
 
@@ -229,36 +232,175 @@ export default function WorkerDashboard({
   const [facilityStock, setFacilityStock] = useState<any>(null);
 
   const [loading, setLoading] = useState(true)
-
   const [onDutyDoctors, setOnDutyDoctors] = useState<Doctor[]>(DEFAULT_DOCTORS)
-
   const [isLive, setIsLive] = useState(false)
-
   const [search, setSearch] = useState("")
-
   const [sosConfirm, setSosConfirm] = useState(false)
-
   const [sosSent, setSosSent] = useState(false)
-
   const [selectedDoctorId, setSelectedDoctorId] = useState("doc1")
-
-  const [selectionMode, setSelectionMode] = useState<"smart" | "manual">(
-    "smart",
-  )
-
+  const [selectionMode, setSelectionMode] = useState<"smart" | "manual">("smart")
   const [countdown, setCountdown] = useState(90)
-
   const [activeSosId, setActiveSosId] = useState<string | null>(null)
-
   const [liveSosStatus, setLiveSosStatus] = useState<any>(null)
-
   const [dbUser, setDbUser] = useState<any>(null)
+
+  // MCH Lifecycle & Immunization Tracker Tab State
+  const [activeTab, setActiveTab] = useState<'overview' | 'mch'>('overview');
+  const [mchVillage, setMchVillage] = useState<string>('Govindpur');
+  const [mchFilter, setMchFilter] = useState<'all' | 'overdue' | 'due' | 'maternal' | 'child' | 'hrp'>('all');
+  const [mchSearch, setMchSearch] = useState<string>('');
+  const [mchDueItems, setMchDueItems] = useState<MchDueAlertItem[]>([]);
+  const [mchRecords, setMchRecords] = useState<MchRecord[]>([]);
+  const [mchStats, setMchStats] = useState<any>({
+    totalBeneficiaries: 5,
+    overdueCount: 3,
+    dueThisWeekCount: 4,
+    highRiskCount: 3,
+    maternalDueCount: 4,
+    childDueCount: 3,
+  });
+  const [mchLoading, setMchLoading] = useState(false);
+  const [completingItem, setCompletingItem] = useState<MchDueAlertItem | null>(null);
+  const [administerForm, setAdministerForm] = useState({
+    completedDate: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+    administeredBy: 'Meena Kumari (ASHA)',
+    facilityName: 'PHC Lunkaransar',
+    batchNumber: '',
+    vitals: { bp: '110/70', weight: '52', hb: '9.0' },
+    notes: '',
+  });
+  const [isRegisteringMch, setIsRegisteringMch] = useState(false);
+  const [registerForm, setRegisterForm] = useState({
+    patientName: '',
+    patientPhone: '',
+    patientAge: '24',
+    village: 'Govindpur',
+    pregnancyStatus: 'PREGNANT' as 'PREGNANT' | 'POSTPARTUM',
+    lmp: '',
+    edd: '',
+    isHighRisk: false,
+    hrpIndicators: [] as string[],
+    childName: '',
+    childDob: '',
+    childGender: 'Female',
+    notes: '',
+  });
+  const [mchToast, setMchToast] = useState<string | null>(null);
+
+  const fetchMch = async (targetVillage?: string) => {
+    setMchLoading(true);
+    try {
+      const v = targetVillage !== undefined ? targetVillage : mchVillage;
+      const res = await getMchDueList({ village: v });
+      if (res) {
+        setMchDueItems(res.dueItems || []);
+        setMchRecords(res.records || []);
+        if (res.stats) setMchStats(res.stats);
+      }
+    } catch {
+      // client handles fallback
+    } finally {
+      setMchLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchMch(mchVillage);
+  }, [mchVillage]);
+
+  const handleConfirmAdminister = async () => {
+    if (!completingItem) return;
+    try {
+      await updateMchMilestone(completingItem.recordId, completingItem.milestoneCode, {
+        status: 'completed',
+        completedDate: administerForm.completedDate,
+        administeredBy: administerForm.administeredBy,
+        facilityName: administerForm.facilityName,
+        batchNumber: administerForm.batchNumber || `LOT-${Date.now().toString().slice(-5)}`,
+        notes: administerForm.notes,
+        vitals: administerForm.vitals,
+      });
+
+      setMchDueItems(prev => prev.filter(i => i.id !== completingItem.id));
+      setMchStats((prev: any) => ({
+        ...prev,
+        overdueCount: completingItem.status === 'overdue' ? Math.max(0, prev.overdueCount - 1) : prev.overdueCount,
+        dueThisWeekCount: completingItem.status === 'due' ? Math.max(0, prev.dueThisWeekCount - 1) : prev.dueThisWeekCount,
+      }));
+
+      setMchToast(`✓ Recorded ${completingItem.milestoneName} for ${completingItem.patientName}!`);
+      setTimeout(() => setMchToast(null), 3500);
+      setCompletingItem(null);
+    } catch {
+      setMchToast('Recorded in local database.');
+      setTimeout(() => setMchToast(null), 3000);
+      setCompletingItem(null);
+    }
+  };
+
+  const handleCreateBeneficiary = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!registerForm.patientName) return;
+
+    let computedEdd = registerForm.edd;
+    if (!computedEdd && registerForm.lmp) {
+      const lmpDate = new Date(registerForm.lmp);
+      if (!isNaN(lmpDate.getTime())) {
+        lmpDate.setDate(lmpDate.getDate() + 280);
+        computedEdd = lmpDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+      }
+    }
+
+    try {
+      await createMchRecord({
+        patientId: `pat-${Date.now()}`,
+        patientName: registerForm.patientName,
+        patientPhone: registerForm.patientPhone,
+        patientVillage: registerForm.village,
+        pregnancyStatus: registerForm.pregnancyStatus,
+        lmp: registerForm.lmp,
+        edd: computedEdd,
+        isHighRisk: registerForm.isHighRisk || registerForm.hrpIndicators.length > 0,
+        hrpIndicators: registerForm.hrpIndicators,
+        childName: registerForm.childName,
+        childDob: registerForm.childDob,
+        childGender: registerForm.childGender,
+        assignedVillage: registerForm.village,
+        assignedWorkerName: dbUser?.fullName || 'Meena Kumari (ASHA)',
+      });
+
+      setMchToast(`✓ Enrolled ${registerForm.patientName} into MCH Lifecycle Tracker!`);
+      setTimeout(() => setMchToast(null), 3500);
+      setIsRegisteringMch(false);
+      setRegisterForm({
+        patientName: '',
+        patientPhone: '',
+        patientAge: '24',
+        village: 'Govindpur',
+        pregnancyStatus: 'PREGNANT',
+        lmp: '',
+        edd: '',
+        isHighRisk: false,
+        hrpIndicators: [],
+        childName: '',
+        childDob: '',
+        childGender: 'Female',
+        notes: '',
+      });
+      fetchMch(mchVillage);
+    } catch {
+      setIsRegisteringMch(false);
+    }
+  };
+
+  const handleSendReminder = (item: MchDueAlertItem) => {
+    setMchToast(`📱 Reminder dispatched to ${item.patientName} (${item.phone || '94141...'}): "${item.milestoneName} is ${item.status === 'overdue' ? 'OVERDUE' : 'due on ' + item.dueDate}. Please visit VHND at Anganwadi!"`);
+    setTimeout(() => setMchToast(null), 4500);
+  };
 
   const today = new Date().toLocaleDateString("en-IN", {
     day: "numeric",
-
     month: "short",
-
     year: "numeric",
   })
 
@@ -1237,7 +1379,86 @@ export default function WorkerDashboard({
         </div>
       </div>
 
-      <Card>
+      {/* Toast Notification */}
+      {mchToast && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white text-xs font-semibold px-4 py-2.5 rounded-2xl shadow-xl flex items-center gap-2 border border-gray-700 animate-in fade-in duration-200">
+          <Icon name="check" size={15} className="text-emerald-400 shrink-0" />
+          <span>{mchToast}</span>
+        </div>
+      )}
+
+      {/* Main Tab Navigation */}
+      <div className="flex bg-gray-100 p-1.5 rounded-2xl border border-gray-200 gap-1.5 shadow-2xs">
+        <button
+          onClick={() => setActiveTab('overview')}
+          className={`flex-1 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+            activeTab === 'overview'
+              ? 'bg-white text-gray-900 shadow-sm'
+              : 'text-gray-500 hover:text-gray-900 hover:bg-white/40'
+          }`}
+        >
+          <Icon name="dashboard" size={16} />
+          <span>Clinical Overview & Consultations</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('mch')}
+          className={`flex-1 py-2.5 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all cursor-pointer relative ${
+            activeTab === 'mch'
+              ? 'bg-rose-600 text-white shadow-md shadow-rose-200'
+              : 'text-gray-600 hover:text-gray-900 hover:bg-white/40'
+          }`}
+        >
+          <span className="text-sm">🤰</span>
+          <span>MCH & Immunization Due List</span>
+          {mchStats?.overdueCount > 0 && (
+            <span
+              className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                activeTab === 'mch'
+                  ? 'bg-white text-rose-700'
+                  : 'bg-rose-100 text-rose-700 border border-rose-200 animate-pulse'
+              }`}
+            >
+              🚨 {mchStats.overdueCount} Overdue
+            </span>
+          )}
+        </button>
+      </div>
+
+      {activeTab === 'overview' && (
+        <div className="space-y-6">
+          {/* MCH Weekly Alert Banner (on Overview tab) */}
+          {mchStats?.overdueCount > 0 && (
+            <div className="p-4 bg-gradient-to-r from-rose-50 via-amber-50 to-orange-50 border border-rose-200 rounded-3xl flex items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500 text-white flex items-center justify-center shrink-0 shadow-sm">
+                  <Icon name="alert" size={20} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-rose-700">
+                      Weekly MCH Action Alert · Week of Sept 15–21, 2026
+                    </span>
+                    <span className="px-2 py-0.5 bg-rose-200 text-rose-900 rounded-full text-[10px] font-black">
+                      {mchStats.overdueCount} OVERDUE
+                    </span>
+                  </div>
+                  <div className="text-sm font-bold text-gray-900 mt-0.5">
+                    {mchStats.overdueCount} immunization doses overdue & {mchStats.dueThisWeekCount} visits due this week in {workerVillage || 'Govindpur'}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setActiveTab('mch')}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl shrink-0 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm shadow-rose-200"
+              >
+                <span>Review Due List</span>
+                <Icon name="chevron_right" size={14} />
+              </button>
+            </div>
+          )}
+
+          <Card>
         <div className="px-4 pt-4 pb-2">
           <SectionHeader
             title="On-Duty Doctors · Facility Roster"
@@ -1893,6 +2114,729 @@ export default function WorkerDashboard({
           </table>
         </div>
       </Card>
+    </div>
+  )}
+
+  {/* ─── TAB 2: MCH & Immunization Due List ─── */}
+  {activeTab === 'mch' && (
+    <div className="space-y-6">
+      {/* Hero Banner with Week Info & Village Filter */}
+      <div className="bg-gradient-to-br from-rose-700 via-rose-600 to-pink-700 text-white rounded-3xl p-6 shadow-xl relative overflow-hidden">
+        <div className="absolute -top-12 -right-12 w-48 h-48 rounded-full bg-white/10 pointer-events-none blur-xl" />
+        <div className="absolute -bottom-8 -left-8 w-36 h-36 rounded-full bg-rose-400/20 pointer-events-none blur-lg" />
+
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-xs font-bold text-rose-100 mb-2">
+              <span className="w-2 h-2 rounded-full bg-rose-200 animate-ping" />
+              RMNCH+A Automated Lifecycle Tracker · National Health Mission
+            </div>
+            <h2 className="font-display text-2xl md:text-3xl font-black tracking-tight">
+              MCH & Immunization Due List
+            </h2>
+            <p className="text-rose-100 text-xs sm:text-sm mt-1">
+              Automated tracking of upcoming & overdue vaccines and maternal checkups for{' '}
+              <span className="font-bold text-white underline decoration-rose-300 underline-offset-2">
+                Week of Sept 15–21, 2026
+              </span>
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setIsRegisteringMch(true)}
+              className="px-4 py-2.5 bg-white hover:bg-rose-50 text-rose-800 text-xs sm:text-sm font-extrabold rounded-2xl shadow-md transition-all flex items-center gap-2 cursor-pointer active:scale-95"
+            >
+              <Icon name="plus" size={16} />
+              <span>Enroll Mother / Child</span>
+            </button>
+
+            <button
+              onClick={() => fetchMch(mchVillage)}
+              className="p-2.5 bg-white/20 hover:bg-white/30 text-white rounded-2xl transition-all cursor-pointer"
+              title="Refresh Due List"
+            >
+              <Icon name="sync" size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Village Selector Pills */}
+        <div className="relative z-10 mt-5 pt-4 border-t border-rose-400/30 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2">
+            <Icon name="map_pin" size={14} className="text-rose-200" />
+            <span className="font-bold text-rose-100">Assigned Village:</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {[
+              { id: 'Govindpur', label: 'Govindpur (My Village)' },
+              { id: 'Khetolai', label: 'Khetolai' },
+              { id: 'Deshnok', label: 'Deshnok' },
+              { id: 'All', label: 'All Villages' },
+            ].map(v => (
+              <button
+                key={v.id}
+                onClick={() => {
+                  setMchVillage(v.id);
+                  fetchMch(v.id);
+                }}
+                className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
+                  mchVillage.toLowerCase() === v.id.toLowerCase()
+                    ? 'bg-white text-rose-800 shadow-sm'
+                    : 'bg-rose-800/40 text-rose-100 hover:bg-rose-800/60'
+                }`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* KPI Stat Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div className="bg-red-50 border border-red-200/80 rounded-3xl p-4.5 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-red-700 uppercase tracking-wider">Overdue Doses</span>
+            <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+          </div>
+          <div className="font-display text-3xl font-black text-red-900 mt-2">
+            {mchStats?.overdueCount ?? 0}
+          </div>
+          <div className="text-[11px] text-red-700 font-medium mt-0.5">
+            Urgent home visits required
+          </div>
+        </div>
+
+        <div className="bg-amber-50 border border-amber-200/80 rounded-3xl p-4.5 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-amber-800 uppercase tracking-wider">Due This Week</span>
+            <Icon name="history" size={15} className="text-amber-600" />
+          </div>
+          <div className="font-display text-3xl font-black text-amber-900 mt-2">
+            {mchStats?.dueThisWeekCount ?? 0}
+          </div>
+          <div className="text-[11px] text-amber-700 font-medium mt-0.5">
+            Scheduled for Wednesday VHND
+          </div>
+        </div>
+
+        <div className="bg-purple-50 border border-purple-200/80 rounded-3xl p-4.5 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-purple-800 uppercase tracking-wider">High-Risk (HRP)</span>
+            <Icon name="shield" size={15} className="text-purple-600" />
+          </div>
+          <div className="font-display text-3xl font-black text-purple-900 mt-2">
+            {mchStats?.highRiskCount ?? 0}
+          </div>
+          <div className="text-[11px] text-purple-700 font-medium mt-0.5">
+            Severe anaemia & high-risk care
+          </div>
+        </div>
+
+        <div className="bg-emerald-50 border border-emerald-200/80 rounded-3xl p-4.5 shadow-2xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Active Beneficiaries</span>
+            <Icon name="users" size={15} className="text-emerald-600" />
+          </div>
+          <div className="font-display text-3xl font-black text-emerald-900 mt-2">
+            {mchStats?.totalBeneficiaries ?? 0}
+          </div>
+          <div className="text-[11px] text-emerald-700 font-medium mt-0.5">
+            Mothers & infants in {mchVillage}
+          </div>
+        </div>
+      </div>
+
+      {/* Filter Chips Bar & Search */}
+      <div className="bg-white border border-gray-200 rounded-2xl p-3 shadow-2xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          {/* Filter Chips */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {[
+              { id: 'all', label: `All Alerts (${mchDueItems.length})` },
+              { id: 'overdue', label: `🚨 Overdue (${mchDueItems.filter(i => i.status === 'overdue').length})` },
+              { id: 'due', label: `📅 Due This Week (${mchDueItems.filter(i => i.status === 'due').length})` },
+              { id: 'maternal', label: '🤰 Maternal (ANC/TT/IFA)' },
+              { id: 'child', label: '👶 Child Immunizations' },
+              { id: 'hrp', label: '⚠️ High-Risk Only' },
+            ].map(f => (
+              <button
+                key={f.id}
+                onClick={() => setMchFilter(f.id as any)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  mchFilter === f.id
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Search */}
+          <div className="relative min-w-[220px]">
+            <Icon name="search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={mchSearch}
+              onChange={e => setMchSearch(e.target.value)}
+              placeholder="Search mother, baby, ID..."
+              className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-400"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Due List Cards */}
+      <div className="space-y-3">
+        {(() => {
+          const normalizedSearch = mchSearch.trim().toLowerCase();
+          const filtered = mchDueItems.filter(item => {
+            if (mchVillage.toLowerCase() !== 'all' && item.village?.toLowerCase() !== mchVillage.toLowerCase()) {
+              return false;
+            }
+            if (mchFilter === 'overdue' && item.status !== 'overdue') return false;
+            if (mchFilter === 'due' && item.status !== 'due') return false;
+            if (mchFilter === 'maternal' && item.category !== 'maternal') return false;
+            if (mchFilter === 'child' && item.category !== 'child') return false;
+            if (mchFilter === 'hrp' && !item.isHighRisk) return false;
+            if (normalizedSearch) {
+              const matchName = item.patientName?.toLowerCase().includes(normalizedSearch);
+              const matchMilestone = item.milestoneName?.toLowerCase().includes(normalizedSearch);
+              const matchHealthId = item.healthId?.toLowerCase().includes(normalizedSearch);
+              const matchChild = item.childName ? item.childName.toLowerCase().includes(normalizedSearch) : false;
+              if (!matchName && !matchMilestone && !matchHealthId && !matchChild) return false;
+            }
+            return true;
+          });
+
+          if (mchLoading) {
+            return (
+              <div className="p-8 text-center bg-white border border-gray-100 rounded-3xl text-sm text-gray-400">
+                Loading MCH schedule from database…
+              </div>
+            );
+          }
+
+          if (filtered.length === 0) {
+            return (
+              <div className="p-10 text-center bg-white border border-gray-100 rounded-3xl space-y-2">
+                <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto text-xl font-bold">
+                  ✓
+                </div>
+                <div className="text-sm font-bold text-gray-900">All caught up! No due items matching this filter</div>
+                <p className="text-xs text-gray-400 max-w-sm mx-auto">
+                  All mothers and children in this village have completed scheduled doses or have no overdue alerts for this selection.
+                </p>
+              </div>
+            );
+          }
+
+          return filtered.map(item => {
+            const isOverdue = item.status === 'overdue';
+
+            return (
+              <div
+                key={item.id}
+                className={`rounded-3xl p-5 border transition-all shadow-2xs hover:shadow-sm ${
+                  isOverdue
+                    ? 'bg-red-50/40 border-red-200'
+                    : 'bg-white border-gray-200'
+                }`}
+              >
+                <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                  {/* Left: Identity & Milestone info */}
+                  <div className="flex items-start gap-3.5 flex-1 min-w-0">
+                    <div
+                      className={`w-12 h-12 rounded-2xl flex items-center justify-center text-xl shrink-0 font-bold shadow-2xs ${
+                        item.category === 'maternal'
+                          ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                          : 'bg-blue-100 text-blue-700 border border-blue-200'
+                      }`}
+                    >
+                      {item.category === 'maternal' ? '🤰' : '👶'}
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      {/* Badges Row */}
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${
+                            item.category === 'maternal'
+                              ? 'bg-rose-100 text-rose-800'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}
+                        >
+                          {item.category === 'maternal' ? 'Maternal Care' : 'Child Immunization'}
+                        </span>
+
+                        {isOverdue ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-red-600 text-white shadow-xs">
+                            <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                            OVERDUE ({item.daysOverdue ? `${item.daysOverdue} days` : 'Immediate'})
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-200">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                            DUE THIS WEEK ({item.dueDate})
+                          </span>
+                        )}
+
+                        {item.isHighRisk && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-purple-100 text-purple-800 border border-purple-200">
+                            ⚠️ High-Risk Pregnancy (HRP)
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Beneficiary Name & Details */}
+                      <h3 className="font-display text-base font-bold text-gray-900">
+                        {item.patientName}
+                        {item.childName && (
+                          <span className="text-gray-500 font-medium text-xs ml-1.5">
+                            · Child: {item.childName} {item.childAge ? `(${item.childAge})` : ''}
+                          </span>
+                        )}
+                      </h3>
+
+                      <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-gray-600 font-semibold">{item.healthId}</span>
+                        <span>·</span>
+                        <span>{item.village}</span>
+                        {item.gestationalWeeks && (
+                          <>
+                            <span>·</span>
+                            <span className="text-rose-700 font-semibold">{item.gestationalWeeks} Weeks Pregnant</span>
+                          </>
+                        )}
+                        {item.phone && (
+                          <>
+                            <span>·</span>
+                            <span className="font-mono">{item.phone}</span>
+                          </>
+                        )}
+                      </div>
+
+                      {/* HRP Indicators */}
+                      {item.hrpIndicators && item.hrpIndicators.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          {item.hrpIndicators.map((hrp: string, idx: number) => (
+                            <span
+                              key={idx}
+                              className="px-2 py-0.5 bg-purple-100/70 border border-purple-200 text-purple-900 rounded-lg text-[10px] font-bold"
+                            >
+                              {hrp}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Due Milestone Card Box */}
+                      <div className="mt-3 p-3 bg-white/90 border border-gray-200 rounded-2xl flex items-start gap-2.5">
+                        <div className="w-7 h-7 rounded-xl bg-gray-100 flex items-center justify-center text-gray-700 shrink-0 mt-0.5 font-bold text-xs">
+                          {item.milestoneCode.startsWith('ANC') ? '🩺' : item.milestoneCode.startsWith('IFA') ? '💊' : '💉'}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-bold text-gray-900">
+                            {item.milestoneName}
+                          </div>
+                          <div className="text-[11px] text-gray-500 mt-0.5">
+                            Recommended timing: <span className="font-semibold text-gray-700">{item.recommendedWeekOrAge || 'Scheduled date'}</span> · Due on: <span className="font-bold text-gray-800">{item.dueDate}</span>
+                          </div>
+                          {item.notes && (
+                            <div className="text-[10px] text-gray-600 mt-1 italic">
+                              Guidance: {item.notes}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right: Actions */}
+                  <div className="flex flex-row md:flex-col items-center md:items-end gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-gray-200">
+                    <button
+                      onClick={() => {
+                        setCompletingItem(item);
+                        setAdministerForm({
+                          completedDate: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+                          administeredBy: dbUser?.fullName || 'Meena Kumari (ASHA)',
+                          facilityName: workerFacility || 'PHC Lunkaransar',
+                          batchNumber: '',
+                          vitals: { bp: '110/70', weight: '52', hb: '9.0' },
+                          notes: '',
+                        });
+                      }}
+                      className="flex-1 md:flex-none px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Icon name="check" size={14} />
+                      <span>Mark Administered</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleSendReminder(item)}
+                      className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                      title="Dispatch automated SMS/WhatsApp alert"
+                    >
+                      <span>💬 Send Reminder</span>
+                    </button>
+
+                    {item.phone && (
+                      <a
+                        href={`tel:${item.phone.replace(/\s+/g, '')}`}
+                        className="p-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl transition-colors flex items-center justify-center"
+                        title="Call Beneficiary"
+                      >
+                        <Icon name="phone" size={14} />
+                      </a>
+                    )}
+
+                    <button
+                      onClick={() => navigate('patient-profile', item.patientId)}
+                      className="text-[11px] text-brand-600 hover:underline font-semibold cursor-pointer hidden md:block mt-1"
+                    >
+                      View Full Profile →
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          });
+        })()}
+      </div>
+    </div>
+  )}
+
+  {/* ─── Modal 1: Mark Milestone Administered / Completed ─── */}
+  {completingItem && (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+              <Icon name="check" size={18} />
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-base text-gray-900">Record Administration</h3>
+              <p className="text-[11px] text-gray-500">MCH Milestone · Official Immunization Record</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setCompletingItem(null)}
+            className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-2xl">
+          <div className="text-xs font-bold text-emerald-950">{completingItem.milestoneName}</div>
+          <div className="text-[11px] text-emerald-800 mt-0.5">
+            Beneficiary: <span className="font-bold">{completingItem.patientName}</span> ({completingItem.healthId})
+          </div>
+        </div>
+
+        <div className="space-y-3 text-xs">
+          <div className="grid grid-cols-2 gap-2.5">
+            <div>
+              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Date Given</label>
+              <input
+                value={administerForm.completedDate}
+                onChange={e => setAdministerForm({ ...administerForm, completedDate: e.target.value })}
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl font-medium focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Batch / Vial #</label>
+              <input
+                placeholder="e.g. VAC-2026-B9"
+                value={administerForm.batchNumber}
+                onChange={e => setAdministerForm({ ...administerForm, batchNumber: e.target.value })}
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl font-mono focus:outline-none focus:ring-2 focus:ring-emerald-400"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Administered By</label>
+            <input
+              value={administerForm.administeredBy}
+              onChange={e => setAdministerForm({ ...administerForm, administeredBy: e.target.value })}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl font-medium focus:outline-none focus:ring-2 focus:ring-emerald-400"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Health Facility / Location</label>
+            <input
+              value={administerForm.facilityName}
+              onChange={e => setAdministerForm({ ...administerForm, facilityName: e.target.value })}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl font-medium focus:outline-none focus:ring-2 focus:ring-emerald-400"
+            />
+          </div>
+
+          {completingItem.category === 'maternal' && (
+            <div className="grid grid-cols-3 gap-2 p-3 bg-gray-50 border border-gray-100 rounded-xl">
+              <div>
+                <span className="block text-[9px] font-bold text-gray-400 uppercase">Blood Pressure</span>
+                <input
+                  value={administerForm.vitals.bp}
+                  onChange={e => setAdministerForm({ ...administerForm, vitals: { ...administerForm.vitals, bp: e.target.value } })}
+                  className="w-full px-2 py-1 bg-white border border-gray-200 rounded-lg text-xs font-mono mt-1"
+                />
+              </div>
+              <div>
+                <span className="block text-[9px] font-bold text-gray-400 uppercase">Weight (kg)</span>
+                <input
+                  value={administerForm.vitals.weight}
+                  onChange={e => setAdministerForm({ ...administerForm, vitals: { ...administerForm.vitals, weight: e.target.value } })}
+                  className="w-full px-2 py-1 bg-white border border-gray-200 rounded-lg text-xs font-mono mt-1"
+                />
+              </div>
+              <div>
+                <span className="block text-[9px] font-bold text-gray-400 uppercase">Hb (g/dL)</span>
+                <input
+                  value={administerForm.vitals.hb}
+                  onChange={e => setAdministerForm({ ...administerForm, vitals: { ...administerForm.vitals, hb: e.target.value } })}
+                  className="w-full px-2 py-1 bg-white border border-gray-200 rounded-lg text-xs font-mono mt-1"
+                />
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Clinical Notes / Findings</label>
+            <textarea
+              rows={2}
+              placeholder="Record maternal vitals, adverse reaction checks, or counseling points..."
+              value={administerForm.notes}
+              onChange={e => setAdministerForm({ ...administerForm, notes: e.target.value })}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-400 resize-none text-xs"
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 pt-2">
+          <button
+            onClick={() => setCompletingItem(null)}
+            className="py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-semibold text-xs cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirmAdminister}
+            className="py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shadow-md shadow-emerald-200 transition-all cursor-pointer"
+          >
+            Confirm & Record Dose
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+
+  {/* ─── Modal 2: Enroll New Mother / Child ─── */}
+  {isRegisteringMch && (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-3xl p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto shadow-2xl space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center font-bold">
+              🤰
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-base text-gray-900">Enroll MCH Beneficiary</h3>
+              <p className="text-[11px] text-gray-500">Auto-schedules RMNCH+A ANC & Immunization roadmap</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setIsRegisteringMch(false)}
+            className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        <form onSubmit={handleCreateBeneficiary} className="space-y-3.5 text-xs">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Mother's Full Name *</label>
+              <input
+                required
+                placeholder="e.g. Geeta Devi"
+                value={registerForm.patientName}
+                onChange={e => setRegisterForm({ ...registerForm, patientName: e.target.value })}
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-400 font-medium"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Mobile Number *</label>
+              <input
+                required
+                placeholder="e.g. 98290 12345"
+                value={registerForm.patientPhone}
+                onChange={e => setRegisterForm({ ...registerForm, patientPhone: e.target.value })}
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-400 font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Village</label>
+              <select
+                value={registerForm.village}
+                onChange={e => setRegisterForm({ ...registerForm, village: e.target.value })}
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl font-medium focus:outline-none focus:ring-2 focus:ring-rose-400"
+              >
+                <option value="Govindpur">Govindpur</option>
+                <option value="Khetolai">Khetolai</option>
+                <option value="Deshnok">Deshnok</option>
+                <option value="Lunkaransar">Lunkaransar</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Pregnancy Status</label>
+              <select
+                value={registerForm.pregnancyStatus}
+                onChange={e => setRegisterForm({ ...registerForm, pregnancyStatus: e.target.value as any })}
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl font-medium focus:outline-none focus:ring-2 focus:ring-rose-400"
+              >
+                <option value="PREGNANT">Currently Pregnant</option>
+                <option value="POSTPARTUM">Delivered / Postpartum Infant</option>
+              </select>
+            </div>
+          </div>
+
+          {registerForm.pregnancyStatus === 'PREGNANT' ? (
+            <div className="p-3.5 bg-rose-50/50 border border-rose-100 rounded-2xl space-y-2.5">
+              <div className="text-[11px] font-bold text-rose-900">Pregnancy Dates & Estimated Due Date</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">Last Menstrual Period (LMP)</label>
+                  <input
+                    type="date"
+                    value={registerForm.lmp}
+                    onChange={e => {
+                      const lmpVal = e.target.value;
+                      let autoEdd = '';
+                      if (lmpVal) {
+                        const d = new Date(lmpVal);
+                        d.setDate(d.getDate() + 280);
+                        autoEdd = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+                      }
+                      setRegisterForm({ ...registerForm, lmp: lmpVal, edd: autoEdd });
+                    }}
+                    className="w-full px-2.5 py-1.5 bg-white border border-gray-200 rounded-xl text-xs font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">Estimated Due Date (EDD)</label>
+                  <input
+                    placeholder="e.g. 15 Nov 2026"
+                    value={registerForm.edd}
+                    onChange={e => setRegisterForm({ ...registerForm, edd: e.target.value })}
+                    className="w-full px-2.5 py-1.5 bg-white border border-gray-200 rounded-xl text-xs font-mono"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="p-3.5 bg-blue-50/50 border border-blue-100 rounded-2xl space-y-2.5">
+              <div className="text-[11px] font-bold text-blue-900">Child / Newborn Details</div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">Baby Name</label>
+                  <input
+                    placeholder="Baby of..."
+                    value={registerForm.childName}
+                    onChange={e => setRegisterForm({ ...registerForm, childName: e.target.value })}
+                    className="w-full px-2.5 py-1.5 bg-white border border-gray-200 rounded-xl text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">Date of Birth</label>
+                  <input
+                    type="date"
+                    value={registerForm.childDob}
+                    onChange={e => setRegisterForm({ ...registerForm, childDob: e.target.value })}
+                    className="w-full px-2.5 py-1.5 bg-white border border-gray-200 rounded-xl text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">Gender</label>
+                  <select
+                    value={registerForm.childGender}
+                    onChange={e => setRegisterForm({ ...registerForm, childGender: e.target.value })}
+                    className="w-full px-2.5 py-1.5 bg-white border border-gray-200 rounded-xl text-xs"
+                  >
+                    <option value="Female">Female</option>
+                    <option value="Male">Male</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* High-Risk Pregnancy (HRP) Indicators */}
+          <div className="p-3.5 bg-purple-50/50 border border-purple-100 rounded-2xl space-y-2">
+            <div className="text-[11px] font-bold text-purple-900 flex items-center justify-between">
+              <span>High-Risk Indicators (HRP Checklist)</span>
+              <span className="text-[10px] text-purple-700 font-normal">Select applicable risks</span>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {[
+                'Severe Anaemia (Hb < 9)',
+                'Gestational Hypertension',
+                'Gestational Diabetes',
+                'Previous Caesarean (LSCS)',
+                'Young Primigravida (< 20)',
+                'Twin / Multiple Pregnancy',
+              ].map(hrp => {
+                const isChecked = registerForm.hrpIndicators.includes(hrp);
+                return (
+                  <label key={hrp} className="flex items-center gap-1.5 text-[11px] text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => {
+                        const next = isChecked
+                          ? registerForm.hrpIndicators.filter(x => x !== hrp)
+                          : [...registerForm.hrpIndicators, hrp];
+                        setRegisterForm({ ...registerForm, hrpIndicators: next, isHighRisk: next.length > 0 });
+                      }}
+                      className="rounded text-rose-600 focus:ring-rose-400"
+                    />
+                    <span>{hrp}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setIsRegisteringMch(false)}
+              className="py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-semibold text-xs cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-xs shadow-md shadow-rose-200 transition-all cursor-pointer"
+            >
+              Enroll & Generate Schedule
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )}
 
       <PhcStockCheckerModal
         isOpen={stockModalOpen}

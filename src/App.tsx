@@ -25,6 +25,7 @@ import PatientMobileDashboard from './screens/PatientMobileDashboard';
 import AdminDashboard from './screens/AdminDashboard';
 import PhcStockCheckerModal from './components/PhcStockCheckerModal';
 import TeleconsultationRoom from './screens/TeleconsultationRoom';
+import McpCardScreen from './screens/McpCardScreen';
 
 interface NavItem {
   id: string;
@@ -600,11 +601,23 @@ export default function App() {
       });
   }, []);
 
+  // Additional sub-screens permitted per role that are not in the primary navigation list
+  const EXTRA_ALLOWED_SCREENS: Record<Role, string[]> = {
+    login: ['login', 'register-patient'],
+    patient: ['mcp-card', 'patient-profile-edit', 'offline', 'sync'],
+    doctor: ['mcp-card', 'doctor-patient-view', 'offline', 'sync', 'doctor-sos-inbox', 'sos-inbox'],
+    worker: ['mcp-card', 'teleconsultation', 'offline', 'sync'],
+    admin: ['offline', 'sync'],
+  };
+
   // Enforce role-based navigation lock
   useEffect(() => {
     if (role !== 'login') {
       const allowedItems = NAV[role] || [];
-      const allowedScreenIds = allowedItems.map((item) => item.id);
+      const allowedScreenIds = [
+        ...allowedItems.map((item) => item.id),
+        ...(EXTRA_ALLOWED_SCREENS[role] || []),
+      ];
       if (role === 'patient') {
         allowedScreenIds.push('teleconsultation', 'phc-stock', 'patient-appointments', 'patient-teleconsult', 'patient-pharmacy');
       }
@@ -1394,6 +1407,16 @@ export default function App() {
                 currentUser?.phone ||
                 ''
               }
+              currentUser={currentUser}
+            />
+          )}
+
+          {screen === 'mcp-card' && (
+            <McpCardScreen
+              navigate={navigate}
+              currentUser={currentUser}
+              loginPhone={currentUser?.phone || ''}
+              patientId={selectedPatientId || currentUser?.patientProfile?.healthId || currentUser?.patientProfile?.id || undefined}
             />
           )}
 

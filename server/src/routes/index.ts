@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router } from 'express';
 
 import authRoutes from './auth.routes.js';
 import patientRoutes from './patient.routes.js';
@@ -14,6 +14,7 @@ import aiRoutes from './ai.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
 import abdmMockRoutes from './abdm.mock.routes.js';
 import emergencyRoutes from './emergency.routes.js';
+import mchRoutes from './mch.routes.js';
 import appointmentRoutes from './appointment.routes.js';
 import teleconsultationRoutes from './teleconsultation.routes.js';
 
@@ -21,6 +22,7 @@ const router = Router();
 
 router.use('/auth', authRoutes);
 router.use('/patients', patientRoutes);
+router.use('/mch', mchRoutes);
 router.use('/assessments', assessmentRoutes);
 router.use('/symptoms', symptomRoutes);
 router.use('/doctors', doctorRoutes);

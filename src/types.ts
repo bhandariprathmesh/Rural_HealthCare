@@ -137,3 +137,83 @@ export interface NavItem {
   icon: string;
   role: Role[];
 }
+
+export type PregnancyStatus = 'PREGNANT' | 'POSTPARTUM' | 'DELIVERED' | 'NOT_PREGNANT';
+
+export type MilestoneCategory = 'maternal' | 'child';
+
+export type MilestoneStatus = 'completed' | 'due' | 'overdue' | 'upcoming';
+
+export interface MchMilestone {
+  id: string;
+  code: string;
+  name: string;
+  category: MilestoneCategory;
+  recommendedWeekOrAge: string;
+  dueDate: string;
+  completedDate?: string;
+  status: MilestoneStatus;
+  administeredBy?: string;
+  facilityName?: string;
+  batchNumber?: string;
+  notes?: string;
+  vitals?: {
+    bloodPressure?: string;
+    weight?: number;
+    haemoglobin?: number;
+    fundalHeight?: string;
+    fetalHeartRate?: string;
+  };
+}
+
+export interface MchRecord {
+  id: string;
+  patientId: string;
+  patientName?: string;
+  patientHealthId?: string;
+  patientPhone?: string;
+  patientVillage?: string;
+  pregnancyStatus: PregnancyStatus;
+  edd?: string;
+  lmp?: string;
+  gestationalWeeks?: number;
+  isHighRisk: boolean;
+  hrpIndicators: string[];
+  gravida?: number;
+  para?: number;
+  bloodGroup?: string;
+  milestones: MchMilestone[];
+  childName?: string;
+  childDob?: string;
+  childGender?: string;
+  childAgeWeeks?: number;
+  nextScheduledDate?: string;
+  nextScheduledMilestone?: string;
+  assignedVillage?: string;
+  assignedWorkerName?: string;
+  notes?: string;
+}
+
+export interface MchDueAlertItem {
+  id: string;
+  recordId: string;
+  patientId: string;
+  patientName: string;
+  healthId: string;
+  phone: string;
+  village: string;
+  isHighRisk: boolean;
+  hrpIndicators: string[];
+  category: MilestoneCategory;
+  milestoneCode: string;
+  milestoneName: string;
+  dueDate: string;
+  status: 'due' | 'overdue' | 'upcoming';
+  daysOverdue?: number;
+  pregnancyStatus?: PregnancyStatus;
+  gestationalWeeks?: number;
+  childName?: string;
+  childAge?: string;
+  recommendedWeekOrAge?: string;
+  notes?: string;
+}

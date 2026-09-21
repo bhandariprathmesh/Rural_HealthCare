@@ -304,12 +304,11 @@ export default function LoginScreen({
     setErrorMessage(null);
 
     setTimeout(() => {
-      const generatedAbha =
-        `${(
-          regFullName || 'patient'
-        )
-          .toLowerCase()
-          .replace(/\s+/g, '')}.abdm@abdm`;
+      const cleanName = (regFullName || 'patient')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '') || 'patient';
+      const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+      const generatedAbha = `${cleanName}.${randomSuffix}@abdm`;
 
       const generatedNumber =
         `91-${Math.floor(
