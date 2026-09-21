@@ -29,6 +29,9 @@ interface Props {
   onSOS: () => void
   loginPhone?: string
   currentUser?: any
+  initialTab?: 'overview' | 'appointments' | 'teleconsultation' | 'pharmacy'
+  initialModal?: 'book' | 'stock' | null
+  navTrigger?: number
 }
 
 function QRCodeSVG({ text, size = 180 }: { text: string; size?: number }) {
@@ -112,7 +115,25 @@ export default function PatientMobileDashboard({
   onSOS,
   loginPhone,
   currentUser,
+  initialTab = 'overview',
+  initialModal = null,
+  navTrigger = 0,
 }: Props) {
+  const [activeTab, setActiveTab] = useState<
+    'overview' | 'appointments' | 'teleconsultation' | 'pharmacy'
+  >(initialTab || 'overview');
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+    if (initialModal === 'book') {
+      setShowBookModal(true);
+    } else if (initialModal === 'stock') {
+      setShowStockModal(true);
+    }
+  }, [initialTab, initialModal, navTrigger]);
+
   const [dbUser, setDbUser] = useState<any>(currentUser || null);
   const [history, setHistory] = useState<any[]>([]);
   const [labs, setLabs] = useState<any[]>([]);
@@ -806,770 +827,1035 @@ export default function PatientMobileDashboard({
         </div>
       </div>
 
-      {/* Assigned Care Team / ASHA Worker Card */}
-      <div className="bg-white border border-gray-100 rounded-2xl p-3.5 shadow-xs flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-100 flex items-center justify-center text-teal-700 shrink-0">
-            <Icon name="user" size={20} />
-          </div>
-          <div>
-            <div className="text-[10px] uppercase font-bold text-teal-700 tracking-wider">
-              Assigned ASHA / Health Worker
-            </div>
-            <div className="text-sm font-bold text-gray-900 mt-0.5">
-              {pt?.healthWorkerName ||
-                pt?.healthWorker?.name ||
-                "Meena Kumari (ASHA)"}
-            </div>
-            <div className="text-[11px] text-gray-500">
-              Community Health Center · {patientVillage || "Local Area"}
-            </div>
-          </div>
-        </div>
-        <div className="px-2.5 py-1 bg-teal-50 border border-teal-200 rounded-full text-[10px] font-bold text-teal-800">
-          Assigned
-        </div>
-      </div>
-
-      {/* Dedicated 1-to-1 Doctor Teleconsultation Card */}
-      <div className="bg-white border border-gray-100 rounded-3xl p-4 shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-100 flex items-center justify-center text-teal-700 shrink-0">
-              <Icon name="video" size={20} />
-            </div>
-            <div>
-              <div className="text-[10px] uppercase font-bold text-teal-700 tracking-wider">
-                1-to-1 Video Consultation
-              </div>
-              <div className="text-sm font-bold text-gray-900 mt-0.5">
-                Doctor Teleconsultation Room
-              </div>
-              <div className="text-[11px] text-gray-500">
-                Direct live consultation & digital prescription delivery
-              </div>
-            </div>
-          </div>
-          <span
-            className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-              activeDoctorCall
-                ? 'bg-emerald-500 text-white animate-pulse'
-                : 'bg-teal-50 text-teal-800 border border-teal-200'
-            }`}
-          >
-            {activeDoctorCall ? 'Doctor Ringing' : 'Waiting for doctor…'}
-          </span>
-        </div>
-
-        <div className="p-3 bg-gradient-to-r from-teal-50 to-emerald-50 border border-teal-100/80 rounded-2xl flex items-center justify-between gap-3">
-          <div className="text-xs text-teal-900 leading-snug">
-            {activeDoctorCall ? (
-              <span>
-                🚨 <strong className="text-emerald-800">{activeDoctorCall.doctorName}</strong> is calling you!
-              </span>
-            ) : (
-              <span className="flex items-center gap-2 text-gray-600">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-500"></span>
-                </span>
-                <span>👉 Waiting for doctor to start consultation…</span>
-              </span>
-            )}
-          </div>
-          {activeDoctorCall ? (
-            <button
-              type="button"
-              onClick={handleAcceptCall}
-              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shrink-0 shadow-xs flex items-center gap-1.5 animate-bounce"
-            >
-              <Icon name="video" size={13} />
-              <span>✅ Accept</span>
-            </button>
-          ) : (
-            <div className="text-[10px] font-mono text-gray-400">
-              Auto-receives
-            </div>
-          )}
-        </div>
-      </div>
-
-      <button
-        onClick={() => setSosConfirm(true)}
-        className="relative w-full py-4 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold rounded-2xl text-base shadow-lg shadow-red-200 transition-all flex items-center justify-center gap-3"
-      >
-        <span className="absolute top-2 right-3 w-2.5 h-2.5 bg-red-400 rounded-full animate-ping" />
-        <Icon name="alert" size={22} />
-        EMERGENCY SOS
-        <span className="text-red-200 text-xs font-normal">
-          · Works offline
-        </span>
-      </button>
-
-      {/* Book Doctor Consultation / OPD Token Banner */}
-      <div className="bg-gradient-to-r from-teal-700 via-teal-800 to-emerald-800 rounded-3xl p-4 text-white shadow-md flex items-center justify-between border border-teal-600/40">
-        <div>
-          <div className="flex items-center gap-1.5 text-teal-200 text-[10px] font-bold uppercase tracking-wider">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            Fast-Track Public Care · OPD Pass
-          </div>
-          <div className="text-base font-extrabold mt-0.5 tracking-tight">
-            Book Doctor Consultation
-          </div>
-          <div className="text-[11px] text-teal-100/90 mt-0.5">
-            Generate your priority digital OPD token & skip waiting lines
-          </div>
-        </div>
+      {/* Patient Dashboard Tab Navigation Bar */}
+      <div className="bg-white border border-gray-200/80 rounded-2xl p-1.5 shadow-xs grid grid-cols-4 gap-1 sticky top-0 z-10 backdrop-blur-md bg-white/95">
         <button
-          onClick={() => setShowBookModal(true)}
-          className="px-3.5 py-2.5 bg-white text-teal-900 font-extrabold rounded-xl text-xs hover:bg-teal-50 transition-all shadow-md active:scale-95 shrink-0 ml-3 cursor-pointer"
+          type="button"
+          onClick={() => setActiveTab('overview')}
+          className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2 px-1 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+            activeTab === 'overview'
+              ? 'bg-teal-700 text-white shadow-xs'
+              : 'text-gray-600 hover:bg-gray-100/80'
+          }`}
         >
-          + Book Slot
+          <Icon name="home" size={15} />
+          <span className="truncate">Overview</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('appointments');
+            setShowBookModal(true);
+          }}
+          className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2 px-1 rounded-xl font-bold text-xs transition-all cursor-pointer relative ${
+            activeTab === 'appointments'
+              ? 'bg-teal-700 text-white shadow-xs'
+              : 'text-gray-600 hover:bg-gray-100/80'
+          }`}
+        >
+          <Icon name="calendar" size={15} />
+          <span className="truncate">OPD</span>
+          {appointments.length > 0 && (
+            <span
+              className={`text-[9px] px-1.5 py-0.2 rounded-full font-bold ${
+                activeTab === 'appointments'
+                  ? 'bg-white text-teal-800'
+                  : 'bg-teal-100 text-teal-800'
+              }`}
+            >
+              {appointments.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (activeDoctorCall) {
+              handleAcceptCall();
+            } else {
+              navigate('teleconsultation', pt?.healthId || patientHealthId, undefined);
+            }
+          }}
+          className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2 px-1 rounded-xl font-bold text-xs transition-all cursor-pointer relative ${
+            activeTab === 'teleconsultation'
+              ? 'bg-teal-700 text-white shadow-xs'
+              : activeDoctorCall
+              ? 'bg-emerald-50 text-emerald-800 border border-emerald-300 animate-pulse'
+              : 'text-gray-600 hover:bg-gray-100/80'
+          }`}
+        >
+          <Icon name="video" size={15} />
+          <span className="truncate">Teleconsult</span>
+          {activeDoctorCall && (
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping absolute top-1.5 right-1.5" />
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab('pharmacy');
+            setShowStockModal(true);
+          }}
+          className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2 px-1 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+            activeTab === 'pharmacy'
+              ? 'bg-teal-700 text-white shadow-xs'
+              : 'text-gray-600 hover:bg-gray-100/80'
+          }`}
+        >
+          <Icon name="pill" size={15} />
+          <span className="truncate">Pharmacy</span>
         </button>
       </div>
 
-      {/* Active OPD Appointments & Passes */}
-      {appointments.length > 0 && (
-        <Card className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 bg-teal-100 rounded-lg flex items-center justify-center text-teal-700 shrink-0">
-                <Icon name="calendar" size={13} />
+      {/* TAB 1: OVERVIEW */}
+      {activeTab === 'overview' && (
+        <>
+          {/* Assigned Care Team / ASHA Worker Card */}
+          <div className="bg-white border border-gray-100 rounded-2xl p-3.5 shadow-xs flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-100 flex items-center justify-center text-teal-700 shrink-0">
+                <Icon name="user" size={20} />
               </div>
-              <span className="font-semibold text-sm text-gray-900">
-                My OPD Appointments ({appointments.length})
-              </span>
+              <div>
+                <div className="text-[10px] uppercase font-bold text-teal-700 tracking-wider">
+                  Assigned ASHA / Health Worker
+                </div>
+                <div className="text-sm font-bold text-gray-900 mt-0.5">
+                  {pt?.healthWorkerName ||
+                    pt?.healthWorker?.name ||
+                    "Meena Kumari (ASHA)"}
+                </div>
+                <div className="text-[11px] text-gray-500">
+                  Community Health Center · {patientVillage || "Local Area"}
+                </div>
+              </div>
+            </div>
+            <div className="px-2.5 py-1 bg-teal-50 border border-teal-200 rounded-full text-[10px] font-bold text-teal-800">
+              Assigned
+            </div>
+          </div>
+
+          {/* Quick Doctor Call Alert if call is ringing */}
+          {activeDoctorCall && (
+            <div className="p-3.5 bg-gradient-to-r from-emerald-600 to-teal-700 text-white rounded-2xl flex items-center justify-between gap-3 shadow-md animate-pulse">
+              <div className="text-xs">
+                🚨 <strong>{activeDoctorCall.doctorName}</strong> is calling you for 1-to-1 video consultation!
+              </div>
+              <button
+                type="button"
+                onClick={handleAcceptCall}
+                className="px-3.5 py-1.5 bg-white text-emerald-800 text-xs font-bold rounded-xl transition-all cursor-pointer shrink-0 shadow-xs hover:bg-emerald-50"
+              >
+                ✅ Accept Call
+              </button>
+            </div>
+          )}
+
+          <button
+            onClick={() => setSosConfirm(true)}
+            className="relative w-full py-4 bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold rounded-2xl text-base shadow-lg shadow-red-200 transition-all flex items-center justify-center gap-3"
+          >
+            <span className="absolute top-2 right-3 w-2.5 h-2.5 bg-red-400 rounded-full animate-ping" />
+            <Icon name="alert" size={22} />
+            EMERGENCY SOS
+            <span className="text-red-200 text-xs font-normal">
+              · Works offline
+            </span>
+          </button>
+
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+            {[
+              ...(!isMale
+                ? [
+                    {
+                      label: 'MCP Card',
+                      icon: 'clipboard',
+                      color: 'bg-rose-50 text-rose-700 ring-1 ring-rose-300 font-bold shadow-xs',
+                      action: () => navigate('mcp-card', pt?.healthId || patientHealthId),
+                    },
+                  ]
+                : []),
+              {
+                label: 'OPD Slot',
+                icon: 'calendar',
+                color: 'bg-teal-50 text-teal-800',
+                action: () => {
+                  setActiveTab('appointments');
+                  setShowBookModal(true);
+                },
+              },
+              {
+                label: 'Video Call',
+                icon: 'video',
+                color: activeDoctorCall
+                  ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-400 ring-2 ring-emerald-300 animate-pulse'
+                  : 'bg-teal-50 text-teal-700',
+                action: () => {
+                  if (activeDoctorCall) {
+                    handleAcceptCall();
+                  } else {
+                    navigate('teleconsultation', pt?.healthId || patientHealthId, undefined);
+                  }
+                },
+              },
+              {
+                label: "Pharmacy",
+                icon: "pill",
+                color: "bg-purple-50 text-purple-700",
+                action: () => {
+                  setActiveTab('pharmacy');
+                  setShowStockModal(true);
+                },
+              },
+              {
+                label: "Records",
+                icon: "clipboard",
+                color: "bg-brand-50 text-brand-700",
+                action: () => navigate("patient-profile"),
+              },
+              {
+                label: "Consent",
+                icon: "shield",
+                color: "bg-green-50 text-green-700",
+                action: () => navigate("consent"),
+              },
+              {
+                label: "Access Log",
+                icon: "eye",
+                color: "bg-amber-50 text-amber-700",
+                action: () => navigate("access-history"),
+              },
+            ].map((item) => (
+              <button
+                key={item.label}
+                onClick={item.action}
+                className={`flex flex-col items-center gap-1.5 p-2 sm:p-2.5 rounded-2xl ${item.color} hover:opacity-80 transition-opacity cursor-pointer`}
+              >
+                <Icon name={item.icon} size={18} />
+                <span className="text-[9px] sm:text-[10px] font-medium text-center leading-tight">
+                  {item.label}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {/* Who Has Access — Doctor consent summary */}
+          {doctorConsents.length > 0 && (
+            <Card className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 bg-blue-100 rounded-lg flex items-center justify-center text-blue-700 shrink-0">
+                    <Icon name="shield" size={12} />
+                  </div>
+                  <span className="font-semibold text-sm text-gray-900">
+                    Who Has Access
+                  </span>
+                </div>
+                <button
+                  onClick={() => navigate("patient-profile")}
+                  className="text-xs text-brand-600 font-semibold hover:underline cursor-pointer"
+                >
+                  Manage →
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {doctorConsents.slice(0, 3).map((c: any) => {
+                  const isPending = c.status === "TEMPORARY"
+
+                  const isGranted = c.status === "GRANTED"
+
+                  const isActing = consentActionInProgress === c.id
+
+                  return (
+                    <div
+                      key={c.id}
+                      className={`flex items-center justify-between gap-2 p-2.5 rounded-xl border ${
+                        isPending
+                          ? "bg-amber-50 border-amber-200"
+                          : isGranted
+                            ? "bg-emerald-50 border-emerald-100"
+                            : "bg-gray-50 border-gray-200"
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-semibold text-gray-900 truncate">
+                          {c.grantedTo}
+                        </div>
+                        <div
+                          className={`text-[10px] font-medium ${
+                            isPending
+                              ? "text-amber-700"
+                              : isGranted
+                                ? "text-emerald-700"
+                                : "text-gray-500"
+                          }`}
+                        >
+                          {isPending
+                            ? "Awaiting your approval"
+                            : isGranted
+                              ? "Access granted"
+                              : "Revoked"}
+                        </div>
+                      </div>
+                      {isPending && (
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            disabled={isActing}
+                            onClick={async () => {
+                              setConsentActionInProgress(c.id)
+
+                              try {
+                                await approvePatientConsent(c.id)
+
+                                setDoctorConsents((prev) =>
+                                  prev.map((x) =>
+                                    x.id === c.id ? { ...x, status: "GRANTED" } : x,
+                                  ),
+                                )
+                              } catch {
+                                // ignore
+                              } finally {
+                                setConsentActionInProgress(null)
+                              }
+                            }}
+                            className="px-2.5 py-1 bg-emerald-600 text-white text-[10px] font-bold rounded-lg cursor-pointer disabled:opacity-50"
+                          >
+                            {isActing ? "…" : "Approve"}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isActing}
+                            onClick={async () => {
+                              setConsentActionInProgress(c.id)
+
+                              try {
+                                await revokePatientConsent(
+                                  c.id,
+                                  "Rejected by patient",
+                                )
+
+                                setDoctorConsents((prev) =>
+                                  prev.map((x) =>
+                                    x.id === c.id ? { ...x, status: "REVOKED" } : x,
+                                  ),
+                                )
+                              } catch {
+                                // ignore
+                              } finally {
+                                setConsentActionInProgress(null)
+                              }
+                            }}
+                            className="px-2.5 py-1 bg-red-50 border border-red-200 text-red-700 text-[10px] font-bold rounded-lg cursor-pointer disabled:opacity-50"
+                          >
+                            {isActing ? "…" : "Reject"}
+                          </button>
+                        </div>
+                      )}
+                      {isGranted && (
+                        <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full shrink-0">
+                          Active
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+                {doctorConsents.length > 3 && (
+                  <button
+                    onClick={() => navigate("patient-profile")}
+                    className="w-full text-center text-xs text-brand-600 font-semibold py-1 cursor-pointer hover:underline"
+                  >
+                    +{doctorConsents.length - 3} more · View all
+                  </button>
+                )}
+              </div>
+            </Card>
+          )}
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="font-display text-base font-bold text-gray-900">
+                  My Health Record
+                </h2>
+
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {history.length} consultations · longitudinal history
+                </p>
+              </div>
+
+              <PermissionBadge type="view-only" />
+            </div>
+
+            <RecordOwnershipBanner />
+
+            {history.length === 0 ? (
+              <div className="text-center py-6 bg-gray-50 rounded-2xl border border-gray-100">
+                <Icon
+                  name="clipboard"
+                  size={24}
+                  className="text-gray-300 mx-auto mb-2"
+                />
+
+                <p className="text-gray-500 text-sm">No health records found.</p>
+
+                <p className="text-gray-400 text-xs">
+                  Visits to the PHC or ASHA will appear here.
+                </p>
+              </div>
+            ) : (
+              history.map((entry: any) => {
+                const isExpanded = expandedConsultation === entry.id
+
+                return (
+                  <Card key={entry.id} className="overflow-hidden">
+                    <button
+                      className="w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-gray-50 transition-colors"
+                      onClick={() =>
+                        setExpandedConsultation(isExpanded ? null : entry.id)
+                      }
+                    >
+                      <div
+                        className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                          entry.risk === "moderate"
+                            ? "bg-amber-100"
+                            : "bg-green-100"
+                        }`}
+                      >
+                        <Icon
+                          name="clipboard"
+                          size={16}
+                          className={
+                            entry.risk === "moderate"
+                              ? "text-amber-700"
+                              : "text-green-700"
+                          }
+                        />
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-semibold text-gray-900 truncate">
+                            {entry.diagnosis}
+                          </span>
+
+                          <RiskBadge level={entry.risk} size="sm" />
+                        </div>
+
+                        <div className="text-[10px] text-gray-500 mt-0.5">
+                          {entry.date} · {entry.time} · {entry.facility}
+                        </div>
+
+                        <div className="text-[10px] text-gray-400">
+                          Recorded by:{" "}
+                          <span className="font-medium">{entry.recordedBy}</span>
+                          {entry.reviewedBy && (
+                            <>
+                              {" · Reviewed by: "}
+                              <span className="font-medium">
+                                {entry.reviewedBy}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      <Icon
+                        name="chevron_down"
+                        size={16}
+                        className={`text-gray-400 shrink-0 mt-1 transition-transform ${
+                          isExpanded ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+
+                    {isExpanded && (
+                      <div className="border-t border-gray-100 divide-y divide-gray-50">
+                        <div className="px-4 py-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                              Symptoms
+                            </span>
+
+                            <PermissionBadge type="asha-recorded" />
+                          </div>
+
+                          <div className="flex flex-wrap gap-1.5">
+                            {entry.symptoms.map((s: string) => (
+                              <span
+                                key={s}
+                                className="px-2 py-0.5 bg-amber-50 border border-amber-100 text-amber-800 rounded-lg text-xs"
+                              >
+                                {s}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="px-4 py-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                              Vitals
+                            </span>
+
+                            <PermissionBadge type="asha-recorded" />
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-2">
+                            {Object.entries(entry.vitals).map(([k, v]) => (
+                              <div
+                                key={k}
+                                className="bg-gray-50 rounded-lg px-2 py-1.5 text-center"
+                              >
+                                <div className="font-mono text-xs font-bold text-gray-800">
+                                  {String(v)}
+                                </div>
+
+                                <div className="text-[9px] text-gray-400 capitalize">
+                                  {k === "bp"
+                                    ? "Blood Pressure"
+                                    : k === "hr"
+                                      ? "Heart Rate"
+                                      : k === "temp"
+                                        ? "Temp"
+                                        : k === "spo2"
+                                          ? "SpO₂"
+                                          : "Weight"}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="px-4 py-3 bg-purple-50/40">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                              Diagnosis
+                            </span>
+
+                            <PermissionBadge type="doctor-editable" />
+                          </div>
+
+                          <p className="text-sm text-gray-900 font-medium">
+                            {entry.diagnosis}
+                          </p>
+                        </div>
+
+
+
+                        {entry.followUp && (
+                          <div className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <Icon
+                                name="history"
+                                size={13}
+                                className="text-brand-500 shrink-0"
+                              />
+
+                              <span className="text-xs text-gray-700">
+                                Follow-up scheduled:{" "}
+                                <strong>{entry.followUp}</strong>
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </Card>
+                )
+              })
+            )}
+
+            <Card>
+              <div className="px-4 pt-4 pb-1">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-display text-sm font-semibold text-gray-900">
+                    Lab & Test Reports
+                  </h3>
+
+                  <PermissionBadge type="clinician-only" />
+                </div>
+              </div>
+
+              <div className="divide-y divide-gray-50">
+                {labs.length === 0 ? (
+                  <div className="p-4 text-center text-gray-500 text-xs">
+                    No lab reports available.
+                  </div>
+                ) : (
+                  labs.map((r: any, i: number) => (
+                    <div key={i} className="px-4 py-3 flex items-start gap-3">
+                      <div
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                          r.status === "abnormal" ? "bg-red-50" : "bg-green-50"
+                        }`}
+                      >
+                        <Icon
+                          name="document"
+                          size={14}
+                          className={
+                            r.status === "abnormal"
+                              ? "text-red-500"
+                              : "text-green-600"
+                          }
+                        />
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-gray-900">
+                            {r.name}
+                          </span>
+
+                          <span
+                            className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase ${
+                              r.status === "abnormal"
+                                ? "bg-red-100 text-red-700"
+                                : "bg-green-100 text-green-700"
+                            }`}
+                          >
+                            {r.status}
+                          </span>
+                        </div>
+
+                        <div className="text-[10px] text-gray-500 mt-0.5">
+                          {r.date} · {r.by}
+                        </div>
+
+                        <div className="text-xs text-gray-700 mt-0.5 font-mono">
+                          {r.result}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Card>
+
+            <button className="w-full flex items-center gap-2.5 px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl hover:border-brand-200 hover:bg-brand-50 transition-all text-left">
+              <Icon name="document" size={16} className="text-gray-500 shrink-0" />
+
+              <div className="flex-1">
+                <div className="text-sm font-medium text-gray-700">
+                  Request Correction / Update
+                </div>
+
+                <div className="text-[10px] text-gray-400">
+                  Flag an error for review by your healthcare provider
+                </div>
+              </div>
+
+              <Icon
+                name="chevron_right"
+                size={14}
+                className="text-gray-400 shrink-0"
+              />
+            </button>
+          </div>
+
+          <button
+            onClick={() => navigate("consent")}
+            className="w-full flex items-center gap-3 p-4 bg-gray-50 border border-gray-100 rounded-2xl hover:border-brand-200 hover:bg-brand-50 transition-all text-left"
+          >
+            <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center shrink-0">
+              <Icon name="shield" size={18} className="text-green-600" />
+            </div>
+
+            <div className="flex-1">
+              <div className="text-sm font-semibold text-gray-900">
+                Privacy & Consent
+              </div>
+
+              <div className="text-xs text-gray-500">
+                Manage who can access your records
+              </div>
+            </div>
+
+            <Icon name="chevron_right" size={16} className="text-gray-400" />
+          </button>
+        </>
+      )}
+
+      {/* TAB 2: APPOINTMENTS */}
+      {activeTab === 'appointments' && (
+        <>
+          {/* Book Doctor Consultation / OPD Token Banner */}
+          <div className="bg-gradient-to-r from-teal-700 via-teal-800 to-emerald-800 rounded-3xl p-4 text-white shadow-md flex items-center justify-between border border-teal-600/40">
+            <div>
+              <div className="flex items-center gap-1.5 text-teal-200 text-[10px] font-bold uppercase tracking-wider">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                Fast-Track Public Care · OPD Pass
+              </div>
+              <div className="text-base font-extrabold mt-0.5 tracking-tight">
+                Book Doctor Consultation
+              </div>
+              <div className="text-[11px] text-teal-100/90 mt-0.5">
+                Generate your priority digital OPD token & skip waiting lines
+              </div>
             </div>
             <button
               onClick={() => setShowBookModal(true)}
-              className="text-xs text-teal-700 font-bold hover:underline cursor-pointer"
+              className="px-3.5 py-2.5 bg-white text-teal-900 font-extrabold rounded-xl text-xs hover:bg-teal-50 transition-all shadow-md active:scale-95 shrink-0 ml-3 cursor-pointer"
             >
-              + New
+              + Book Slot
             </button>
           </div>
 
-          <div className="space-y-2.5">
-            {appointments.map((apt: any) => (
-              <div
-                key={apt.id}
-                className="p-3 bg-gray-50 border border-gray-100 rounded-2xl flex items-center justify-between hover:bg-gray-100/60 transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 bg-white border-2 border-teal-300 rounded-xl flex flex-col items-center justify-center text-teal-800 shadow-2xs shrink-0">
-                    <span className="text-[8px] font-bold uppercase text-teal-600">
-                      TOKEN
-                    </span>
-                    <span className="text-base font-extrabold leading-none">
-                      #{apt.tokenNumber || "—"}
-                    </span>
+          {/* Active OPD Appointments & Passes */}
+          {appointments.length > 0 ? (
+            <Card className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 bg-teal-100 rounded-lg flex items-center justify-center text-teal-700 shrink-0">
+                    <Icon name="calendar" size={13} />
                   </div>
-
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold text-gray-900 truncate">
-                      {apt.doctor?.name || "Assigned Medical Officer"}
-                    </div>
-                    <div className="text-[11px] text-gray-500 truncate">
-                      {apt.facility?.name || "Primary Health Centre"} ·{" "}
-                      {apt.doctor?.specialty || "General Medicine"}
-                    </div>
-                    <div className="text-[10px] text-teal-700 font-medium mt-0.5 flex items-center gap-2">
-                      <span>📅 {apt.scheduledDate}</span>
-                      <span>⏰ {apt.timeSlot || "Morning OPD"}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-col items-end gap-1.5 shrink-0 ml-2">
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
-                      apt.status === "COMPLETED"
-                        ? "bg-green-100 text-green-800"
-                        : apt.status === "IN_PROGRESS"
-                          ? "bg-amber-100 text-amber-800 animate-pulse"
-                          : "bg-teal-100 text-teal-800"
-                    }`}
-                  >
-                    {apt.status || "CONFIRMED"}
+                  <span className="font-semibold text-sm text-gray-900">
+                    My OPD Appointments ({appointments.length})
                   </span>
-                  <button
-                    onClick={() => setBookedTokenCard(apt)}
-                    className="text-[11px] text-brand-600 font-bold hover:underline cursor-pointer"
-                  >
-                    View Slip →
-                  </button>
                 </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-        {[
-          ...(!isMale
-            ? [
-                {
-                  label: 'MCP Card',
-                  icon: 'clipboard',
-                  color: 'bg-rose-50 text-rose-700 ring-1 ring-rose-300 font-bold shadow-xs',
-                  action: () => navigate('mcp-card', pt?.healthId || patientHealthId),
-                },
-              ]
-            : []),
-          {
-            label: 'Video Call',
-            icon: 'video',
-            color: activeDoctorCall
-              ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-400 ring-2 ring-emerald-300 animate-pulse'
-              : 'bg-teal-50 text-teal-700',
-            action: () =>
-              navigate(
-                'teleconsultation',
-                pt?.healthId || patientHealthId,
-                activeDoctorCall?.sessionId || undefined
-              ),
-          },
-          {
-            label: "Records",
-            icon: "clipboard",
-            color: "bg-brand-50 text-brand-700",
-            action: () => navigate("patient-profile"),
-          },
-          {
-            label: "Medicines",
-            icon: "pill",
-            color: "bg-purple-50 text-purple-700",
-            action: () => setShowMedsModal(true),
-          },
-          {
-            label: "PHC Stock",
-            icon: "search",
-            color: "bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-xs",
-            action: () => setShowStockModal(true),
-          },
-          {
-            label: "Consent",
-            icon: "shield",
-            color: "bg-green-50 text-green-700",
-            action: () => navigate("consent"),
-          },
-          {
-            label: "Access Log",
-            icon: "eye",
-            color: "bg-amber-50 text-amber-700",
-            action: () => navigate("access-history"),
-          },
-        ].map((item) => (
-          <button
-            key={item.label}
-            onClick={item.action}
-            className={`flex flex-col items-center gap-1.5 p-2 sm:p-2.5 rounded-2xl ${item.color} hover:opacity-80 transition-opacity cursor-pointer`}
-          >
-            <Icon name={item.icon} size={18} />
-            <span className="text-[10px] font-semibold text-center leading-tight">
-              {item.label}
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {/* Who Has Access — Doctor consent summary */}
-      {doctorConsents.length > 0 && (
-        <Card className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 bg-blue-100 rounded-lg flex items-center justify-center text-blue-700 shrink-0">
-                <Icon name="shield" size={12} />
-              </div>
-              <span className="font-semibold text-sm text-gray-900">
-                Who Has Access
-              </span>
-            </div>
-            <button
-              onClick={() => navigate("patient-profile")}
-              className="text-xs text-brand-600 font-semibold hover:underline cursor-pointer"
-            >
-              Manage →
-            </button>
-          </div>
-
-          <div className="space-y-2">
-            {doctorConsents.slice(0, 3).map((c: any) => {
-              const isPending = c.status === "TEMPORARY"
-
-              const isGranted = c.status === "GRANTED"
-
-              const isActing = consentActionInProgress === c.id
-
-              return (
-                <div
-                  key={c.id}
-                  className={`flex items-center justify-between gap-2 p-2.5 rounded-xl border ${
-                    isPending
-                      ? "bg-amber-50 border-amber-200"
-                      : isGranted
-                        ? "bg-emerald-50 border-emerald-100"
-                        : "bg-gray-50 border-gray-200"
-                  }`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-semibold text-gray-900 truncate">
-                      {c.grantedTo}
-                    </div>
-                    <div
-                      className={`text-[10px] font-medium ${
-                        isPending
-                          ? "text-amber-700"
-                          : isGranted
-                            ? "text-emerald-700"
-                            : "text-gray-500"
-                      }`}
-                    >
-                      {isPending
-                        ? "Awaiting your approval"
-                        : isGranted
-                          ? "Access granted"
-                          : "Revoked"}
-                    </div>
-                  </div>
-                  {isPending && (
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        disabled={isActing}
-                        onClick={async () => {
-                          setConsentActionInProgress(c.id)
-
-                          try {
-                            await approvePatientConsent(c.id)
-
-                            setDoctorConsents((prev) =>
-                              prev.map((x) =>
-                                x.id === c.id ? { ...x, status: "GRANTED" } : x,
-                              ),
-                            )
-                          } catch {
-                            // ignore
-                          } finally {
-                            setConsentActionInProgress(null)
-                          }
-                        }}
-                        className="px-2.5 py-1 bg-emerald-600 text-white text-[10px] font-bold rounded-lg cursor-pointer disabled:opacity-50"
-                      >
-                        {isActing ? "…" : "Approve"}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isActing}
-                        onClick={async () => {
-                          setConsentActionInProgress(c.id)
-
-                          try {
-                            await revokePatientConsent(
-                              c.id,
-                              "Rejected by patient",
-                            )
-
-                            setDoctorConsents((prev) =>
-                              prev.map((x) =>
-                                x.id === c.id ? { ...x, status: "REVOKED" } : x,
-                              ),
-                            )
-                          } catch {
-                            // ignore
-                          } finally {
-                            setConsentActionInProgress(null)
-                          }
-                        }}
-                        className="px-2.5 py-1 bg-red-50 border border-red-200 text-red-700 text-[10px] font-bold rounded-lg cursor-pointer disabled:opacity-50"
-                      >
-                        {isActing ? "…" : "Reject"}
-                      </button>
-                    </div>
-                  )}
-                  {isGranted && (
-                    <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full shrink-0">
-                      Active
-                    </span>
-                  )}
-                </div>
-              )
-            })}
-            {doctorConsents.length > 3 && (
-              <button
-                onClick={() => navigate("patient-profile")}
-                className="w-full text-center text-xs text-brand-600 font-semibold py-1 cursor-pointer hover:underline"
-              >
-                +{doctorConsents.length - 3} more · View all
-              </button>
-            )}
-          </div>
-        </Card>
-      )}
-
-      {/* Bilingual PHC Stock Availability Check Banner */}
-      <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-white border border-emerald-200/80 shadow-xs flex items-center justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs mt-0.5">
-            <Icon name="pill" size={18} />
-          </div>
-          <div>
-            <div className="text-xs font-bold text-gray-900 flex items-center gap-1.5 flex-wrap">
-              <span>Check PHC Medicines & Lab Tests Before Visiting</span>
-              <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.2 rounded">Sanjivani PHC</span>
-            </div>
-            <div className="text-[11px] text-gray-600 mt-0.5">
-              अस्पताल जाने से पहले दवा (पैरासिटामोल, ओआरएस) और जांच किट (मलेरिया, शुगर) का लाइव स्टॉक देखें।
-            </div>
-          </div>
-        </div>
-
-        <button
-          onClick={() => setShowStockModal(true)}
-          className="px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shrink-0 transition-colors cursor-pointer shadow-xs active:scale-95"
-        >
-          Check Stock / जांचें →
-        </button>
-      </div>
-
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="font-display text-base font-bold text-gray-900">
-              My Health Record
-            </h2>
-
-            <p className="text-xs text-gray-500 mt-0.5">
-              {history.length} consultations · longitudinal history
-            </p>
-          </div>
-
-          <PermissionBadge type="view-only" />
-        </div>
-
-        <RecordOwnershipBanner />
-
-        {history.length === 0 ? (
-          <div className="text-center py-6 bg-gray-50 rounded-2xl border border-gray-100">
-            <Icon
-              name="clipboard"
-              size={24}
-              className="text-gray-300 mx-auto mb-2"
-            />
-
-            <p className="text-gray-500 text-sm">No health records found.</p>
-
-            <p className="text-gray-400 text-xs">
-              Visits to the PHC or ASHA will appear here.
-            </p>
-          </div>
-        ) : (
-          history.map((entry: any) => {
-            const isExpanded = expandedConsultation === entry.id
-
-            return (
-              <Card key={entry.id} className="overflow-hidden">
                 <button
-                  className="w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-gray-50 transition-colors"
-                  onClick={() =>
-                    setExpandedConsultation(isExpanded ? null : entry.id)
-                  }
+                  onClick={() => setShowBookModal(true)}
+                  className="text-xs text-teal-700 font-bold hover:underline cursor-pointer"
                 >
-                  <div
-                    className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-                      entry.risk === "moderate"
-                        ? "bg-amber-100"
-                        : "bg-green-100"
-                    }`}
-                  >
-                    <Icon
-                      name="clipboard"
-                      size={16}
-                      className={
-                        entry.risk === "moderate"
-                          ? "text-amber-700"
-                          : "text-green-700"
-                      }
-                    />
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-semibold text-gray-900 truncate">
-                        {entry.diagnosis}
-                      </span>
-
-                      <RiskBadge level={entry.risk} size="sm" />
-                    </div>
-
-                    <div className="text-[10px] text-gray-500 mt-0.5">
-                      {entry.date} · {entry.time} · {entry.facility}
-                    </div>
-
-                    <div className="text-[10px] text-gray-400">
-                      Recorded by:{" "}
-                      <span className="font-medium">{entry.recordedBy}</span>
-                      {entry.reviewedBy && (
-                        <>
-                          {" · Reviewed by: "}
-                          <span className="font-medium">
-                            {entry.reviewedBy}
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  <Icon
-                    name="chevron_down"
-                    size={16}
-                    className={`text-gray-400 shrink-0 mt-1 transition-transform ${
-                      isExpanded ? "rotate-180" : ""
-                    }`}
-                  />
+                  + New
                 </button>
+              </div>
 
-                {isExpanded && (
-                  <div className="border-t border-gray-100 divide-y divide-gray-50">
-                    <div className="px-4 py-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-                          Symptoms
+              <div className="space-y-2.5">
+                {appointments.map((apt: any) => (
+                  <div
+                    key={apt.id}
+                    className="p-3 bg-gray-50 border border-gray-100 rounded-2xl flex items-center justify-between hover:bg-gray-100/60 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 bg-white border-2 border-teal-300 rounded-xl flex flex-col items-center justify-center text-teal-800 shadow-2xs shrink-0">
+                        <span className="text-[8px] font-bold uppercase text-teal-600">
+                          TOKEN
                         </span>
-
-                        <PermissionBadge type="asha-recorded" />
-                      </div>
-
-                      <div className="flex flex-wrap gap-1.5">
-                        {entry.symptoms.map((s: string) => (
-                          <span
-                            key={s}
-                            className="px-2 py-0.5 bg-amber-50 border border-amber-100 text-amber-800 rounded-lg text-xs"
-                          >
-                            {s}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="px-4 py-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-                          Vitals
+                        <span className="text-base font-extrabold leading-none">
+                          #{apt.tokenNumber || "—"}
                         </span>
-
-                        <PermissionBadge type="asha-recorded" />
                       </div>
 
-                      <div className="grid grid-cols-3 gap-2">
-                        {Object.entries(entry.vitals).map(([k, v]) => (
-                          <div
-                            key={k}
-                            className="bg-gray-50 rounded-lg px-2 py-1.5 text-center"
-                          >
-                            <div className="font-mono text-xs font-bold text-gray-800">
-                              {String(v)}
-                            </div>
-
-                            <div className="text-[9px] text-gray-400 capitalize">
-                              {k === "bp"
-                                ? "Blood Pressure"
-                                : k === "hr"
-                                  ? "Heart Rate"
-                                  : k === "temp"
-                                    ? "Temp"
-                                    : k === "spo2"
-                                      ? "SpO₂"
-                                      : "Weight"}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="px-4 py-3 bg-purple-50/40">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-                          Diagnosis
-                        </span>
-
-                        <PermissionBadge type="doctor-editable" />
-                      </div>
-
-                      <p className="text-sm text-gray-900 font-medium">
-                        {entry.diagnosis}
-                      </p>
-                    </div>
-
-
-
-                    {entry.followUp && (
-                      <div className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <Icon
-                            name="history"
-                            size={13}
-                            className="text-brand-500 shrink-0"
-                          />
-
-                          <span className="text-xs text-gray-700">
-                            Follow-up scheduled:{" "}
-                            <strong>{entry.followUp}</strong>
-                          </span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-gray-900 truncate">
+                          {apt.doctor?.name || "Assigned Medical Officer"}
+                        </div>
+                        <div className="text-[11px] text-gray-500 truncate">
+                          {apt.facility?.name || "Primary Health Centre"} ·{" "}
+                          {apt.doctor?.specialty || "General Medicine"}
+                        </div>
+                        <div className="text-[10px] text-teal-700 font-medium mt-0.5 flex items-center gap-2">
+                          <span>📅 {apt.scheduledDate}</span>
+                          <span>⏰ {apt.timeSlot || "Morning OPD"}</span>
                         </div>
                       </div>
-                    )}
-                  </div>
-                )}
-              </Card>
-            )
-          })
-        )}
+                    </div>
 
-        <Card>
-          <div className="px-4 pt-4 pb-1">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-display text-sm font-semibold text-gray-900">
-                Lab & Test Reports
-              </h3>
-
-              <PermissionBadge type="clinician-only" />
-            </div>
-          </div>
-
-          <div className="divide-y divide-gray-50">
-            {labs.length === 0 ? (
-              <div className="p-4 text-center text-gray-500 text-xs">
-                No lab reports available.
-              </div>
-            ) : (
-              labs.map((r: any, i: number) => (
-                <div key={i} className="px-4 py-3 flex items-start gap-3">
-                  <div
-                    className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                      r.status === "abnormal" ? "bg-red-50" : "bg-green-50"
-                    }`}
-                  >
-                    <Icon
-                      name="document"
-                      size={14}
-                      className={
-                        r.status === "abnormal"
-                          ? "text-red-500"
-                          : "text-green-600"
-                      }
-                    />
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold text-gray-900">
-                        {r.name}
-                      </span>
-
+                    <div className="flex flex-col items-end gap-1.5 shrink-0 ml-2">
                       <span
-                        className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase ${
-                          r.status === "abnormal"
-                            ? "bg-red-100 text-red-700"
-                            : "bg-green-100 text-green-700"
+                        className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
+                          apt.status === "COMPLETED"
+                            ? "bg-green-100 text-green-800"
+                            : apt.status === "IN_PROGRESS"
+                              ? "bg-amber-100 text-amber-800 animate-pulse"
+                              : "bg-teal-100 text-teal-800"
                         }`}
                       >
-                        {r.status}
+                        {apt.status || "CONFIRMED"}
                       </span>
-                    </div>
-
-                    <div className="text-[10px] text-gray-500 mt-0.5">
-                      {r.date} · {r.by}
-                    </div>
-
-                    <div className="text-xs text-gray-700 mt-0.5 font-mono">
-                      {r.result}
+                      <button
+                        onClick={() => setBookedTokenCard(apt)}
+                        className="text-[11px] text-brand-600 font-bold hover:underline cursor-pointer"
+                      >
+                        View Slip →
+                      </button>
                     </div>
                   </div>
-                </div>
-              ))
-            )}
-          </div>
-        </Card>
-
-        <button className="w-full flex items-center gap-2.5 px-4 py-3 bg-gray-50 border border-gray-200 rounded-2xl hover:border-brand-200 hover:bg-brand-50 transition-all text-left">
-          <Icon name="document" size={16} className="text-gray-500 shrink-0" />
-
-          <div className="flex-1">
-            <div className="text-sm font-medium text-gray-700">
-              Request Correction / Update
-            </div>
-
-            <div className="text-[10px] text-gray-400">
-              Flag an error for review by your healthcare provider
-            </div>
-          </div>
-
-          <Icon
-            name="chevron_right"
-            size={14}
-            className="text-gray-400 shrink-0"
-          />
-        </button>
-      </div>
-
-      <Card>
-        <div className="p-4">
-          <div className="font-display font-semibold text-gray-800 mb-3">
-            My Medicines
-          </div>
-
-          <div className="space-y-2">
-            {patientMeds.length === 0 ? (
-              <div className="text-xs text-gray-400 text-center py-2">
-                No medicines on record.
+                ))}
               </div>
-            ) : (
-              patientMeds.map((m: any, i: number) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-2.5 p-2.5 rounded-xl border border-gray-100"
-                >
-                  <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center shrink-0">
-                    <Icon name="pill" size={14} className="text-blue-600" />
+            </Card>
+          ) : (
+            <Card className="p-8 text-center space-y-3">
+              <div className="w-12 h-12 bg-teal-50 text-teal-700 rounded-2xl flex items-center justify-center mx-auto">
+                <Icon name="calendar" size={24} />
+              </div>
+              <div>
+                <h3 className="font-bold text-gray-900 text-sm">No Active OPD Appointments</h3>
+                <p className="text-xs text-gray-500 mt-1 max-w-sm mx-auto">
+                  You do not have any pending appointments or OPD passes. Book a consultation slot above to receive a priority digital token and skip queues.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowBookModal(true)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer"
+              >
+                <Icon name="plus" size={13} />
+                Book OPD Appointment
+              </button>
+            </Card>
+          )}
+        </>
+      )}
+
+      {/* TAB 3: TELECONSULTATION */}
+      {activeTab === 'teleconsultation' && (
+        <>
+          {/* Dedicated 1-to-1 Doctor Teleconsultation Card */}
+          <div className="bg-white border border-gray-100 rounded-3xl p-4 shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-100 flex items-center justify-center text-teal-700 shrink-0">
+                  <Icon name="video" size={20} />
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase font-bold text-teal-700 tracking-wider">
+                    1-to-1 Video Consultation
                   </div>
-
-                  <div>
-                    <div className="text-sm font-medium text-gray-900">
-                      {typeof m === "string" ? m : m.name}
-                    </div>
-
-                    <div className="text-[10px] text-gray-500">
-                      {typeof m === "string" ? "" : m.dosage || m.dose || ""}
-                    </div>
+                  <div className="text-sm font-bold text-gray-900 mt-0.5">
+                    Doctor Teleconsultation Room
+                  </div>
+                  <div className="text-[11px] text-gray-500">
+                    Direct live consultation & digital prescription delivery
                   </div>
                 </div>
-              ))
-            )}
+              </div>
+              <span
+                className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                  activeDoctorCall
+                    ? 'bg-emerald-500 text-white animate-pulse'
+                    : 'bg-teal-50 text-teal-800 border border-teal-200'
+                }`}
+              >
+                {activeDoctorCall ? 'Doctor Ringing' : 'Waiting for doctor…'}
+              </span>
+            </div>
+
+            <div className="p-3 bg-gradient-to-r from-teal-50 to-emerald-50 border border-teal-100/80 rounded-2xl flex items-center justify-between gap-3">
+              <div className="text-xs text-teal-900 leading-snug">
+                {activeDoctorCall ? (
+                  <span>
+                    🚨 <strong className="text-emerald-800">{activeDoctorCall.doctorName}</strong> is calling you!
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2 text-gray-600">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-500"></span>
+                    </span>
+                    <span>👉 Waiting for doctor to start consultation…</span>
+                  </span>
+                )}
+              </div>
+              {activeDoctorCall ? (
+                <button
+                  type="button"
+                  onClick={handleAcceptCall}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shrink-0 shadow-xs flex items-center gap-1.5 animate-bounce"
+                >
+                  <Icon name="video" size={13} />
+                  <span>✅ Accept</span>
+                </button>
+              ) : (
+                <div className="text-[10px] font-mono text-gray-400">
+                  Auto-receives
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      </Card>
 
-      <button
-        onClick={() => navigate("consent")}
-        className="w-full flex items-center gap-3 p-4 bg-gray-50 border border-gray-100 rounded-2xl hover:border-brand-200 hover:bg-brand-50 transition-all text-left"
-      >
-        <div className="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center shrink-0">
-          <Icon name="shield" size={18} className="text-green-600" />
-        </div>
+          {/* Virtual PHC Clinic information card & direct launcher */}
+          <div className="bg-gradient-to-br from-teal-900 via-teal-800 to-emerald-900 rounded-3xl p-5 text-white shadow-md space-y-4">
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-teal-500/20 text-teal-300 text-[10px] font-bold uppercase tracking-wider border border-teal-400/30">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Virtual PHC Clinic
+                </div>
+                <h3 className="text-base font-bold">Direct Medical Consultation</h3>
+                <p className="text-xs text-teal-200/90 leading-relaxed max-w-md">
+                  High-definition video consultations with PHC Medical Officers. Low-bandwidth optimized for rural networks with end-to-end medical privacy.
+                </p>
+              </div>
+              <div className="w-12 h-12 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center text-teal-200 shrink-0">
+                <Icon name="video" size={24} />
+              </div>
+            </div>
 
-        <div className="flex-1">
-          <div className="text-sm font-semibold text-gray-900">
-            Privacy & Consent
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+              <div className="bg-white/10 rounded-xl p-2.5 border border-white/10">
+                <div className="text-[10px] text-teal-300 uppercase font-semibold">Privacy</div>
+                <div className="text-xs font-bold text-white mt-0.5">Encrypted WebRTC</div>
+              </div>
+              <div className="bg-white/10 rounded-xl p-2.5 border border-white/10">
+                <div className="text-[10px] text-teal-300 uppercase font-semibold">Prescriptions</div>
+                <div className="text-xs font-bold text-white mt-0.5">Instant Digital Rx</div>
+              </div>
+              <div className="bg-white/10 rounded-xl p-2.5 border border-white/10">
+                <div className="text-[10px] text-teal-300 uppercase font-semibold">Low Data</div>
+                <div className="text-xs font-bold text-white mt-0.5">2G/3G Resilient</div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                navigate(
+                  'teleconsultation',
+                  pt?.healthId || patientHealthId,
+                  activeDoctorCall?.sessionId || undefined
+                )
+              }
+              className="w-full py-3 bg-white hover:bg-teal-50 text-teal-900 font-extrabold rounded-2xl text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-98 cursor-pointer"
+            >
+              <Icon name="video" size={16} />
+              <span>Enter Teleconsultation Room →</span>
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* TAB 4: PHARMACY */}
+      {activeTab === 'pharmacy' && (
+        <>
+          {/* Bilingual PHC Stock Availability Check Banner */}
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-white border border-emerald-200/80 shadow-xs flex items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs mt-0.5">
+                <Icon name="pill" size={18} />
+              </div>
+              <div>
+                <div className="text-xs font-bold text-gray-900 flex items-center gap-1.5 flex-wrap">
+                  <span>Check PHC Medicines & Lab Tests Before Visiting</span>
+                  <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.2 rounded">Sanjivani PHC</span>
+                </div>
+                <div className="text-[11px] text-gray-600 mt-0.5">
+                  अस्पताल जाने से पहले दवा (पैरासिटामोल, ओआरएस) और जांच किट (मलेरिया, शुगर) का लाइव स्टॉक देखें।
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowStockModal(true)}
+              className="px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shrink-0 transition-colors cursor-pointer shadow-xs active:scale-95"
+            >
+              Check Stock / जांचें →
+            </button>
           </div>
 
-          <div className="text-xs text-gray-500">
-            Manage who can access your records
-          </div>
-        </div>
+          <Card>
+            <div className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="font-display font-semibold text-gray-800">
+                  My Prescribed Medicines
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowMedsModal(true)}
+                  className="text-xs text-brand-600 font-semibold hover:underline cursor-pointer"
+                >
+                  View Details →
+                </button>
+              </div>
 
-        <Icon name="chevron_right" size={16} className="text-gray-400" />
-      </button>
+              <div className="space-y-2">
+                {patientMeds.length === 0 ? (
+                  <div className="text-xs text-gray-400 text-center py-4 bg-gray-50 rounded-xl border border-gray-100">
+                    No active medicines on record.
+                  </div>
+                ) : (
+                  patientMeds.map((m: any, i: number) => (
+                    <div
+                      key={i}
+                      className="flex items-center justify-between p-3 rounded-xl border border-gray-100 bg-gray-50/60"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center shrink-0 text-blue-600">
+                          <Icon name="pill" size={14} />
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-gray-900">
+                            {typeof m === "string" ? m : m.name}
+                          </div>
+                          <div className="text-[10px] text-gray-500">
+                            {typeof m === "string" ? "" : m.dosage || m.dose || ""}
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowStockModal(true)}
+                        className="text-[10px] text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg hover:bg-emerald-100 transition-colors cursor-pointer shrink-0"
+                      >
+                        Check Stock
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </Card>
+
+          {/* PHC Live Medicine Stock & Lab Tests card */}
+          <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 bg-emerald-100 rounded-lg flex items-center justify-center text-emerald-700 shrink-0">
+                  <Icon name="search" size={13} />
+                </div>
+                <span className="font-semibold text-sm text-gray-900">
+                  PHC Dispensary & Lab Inventory
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowStockModal(true)}
+                className="text-xs text-emerald-700 font-bold hover:underline cursor-pointer"
+              >
+                Open Full Catalog →
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-500">
+              Real-time stock of government essential medicines, maternal supplements, antibiotics, and rapid blood diagnostic kits at your assigned PHC.
+            </p>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+              <div className="p-2.5 bg-gray-50 rounded-xl border border-gray-100 text-center">
+                <div className="text-[10px] text-gray-500 font-medium">Paracetamol 500mg</div>
+                <div className="text-xs font-bold text-emerald-700 mt-0.5">In Stock</div>
+              </div>
+              <div className="p-2.5 bg-gray-50 rounded-xl border border-gray-100 text-center">
+                <div className="text-[10px] text-gray-500 font-medium">ORS Sachets</div>
+                <div className="text-xs font-bold text-emerald-700 mt-0.5">In Stock</div>
+              </div>
+              <div className="p-2.5 bg-gray-50 rounded-xl border border-gray-100 text-center">
+                <div className="text-[10px] text-gray-500 font-medium">Amoxicillin 500mg</div>
+                <div className="text-xs font-bold text-emerald-700 mt-0.5">In Stock</div>
+              </div>
+              <div className="p-2.5 bg-gray-50 rounded-xl border border-gray-100 text-center">
+                <div className="text-[10px] text-gray-500 font-medium">Malaria Test Kit</div>
+                <div className="text-xs font-bold text-emerald-700 mt-0.5">In Stock</div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowStockModal(true)}
+              className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-xs transition-colors cursor-pointer mt-1"
+            >
+              <Icon name="pill" size={14} />
+              <span>Launch Live PHC Stock Checker</span>
+            </button>
+          </div>
+        </>
+      )}
 
       {/* Share Toast */}
       {shareToast && (

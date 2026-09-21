@@ -181,13 +181,23 @@ const NAV: Record<Role, NavItem[]> = {
   patient: [
     {
       id: 'patient-dashboard',
-      label: 'My Health',
-      icon: 'home',
+      label: 'Overview',
+      icon: 'dashboard',
+    },
+    {
+      id: 'patient-appointments',
+      label: 'OPD Appointments',
+      icon: 'calendar',
     },
     {
       id: 'teleconsultation',
-      label: 'Video Consultation',
+      label: 'Teleconsultation',
       icon: 'video',
+    },
+    {
+      id: 'patient-pharmacy',
+      label: 'Pharmacy & Stock',
+      icon: 'pill',
     },
     {
       id: 'patient-profile',
@@ -386,6 +396,9 @@ export default function App() {
     useState(false);
 
   const [pendingSync, setPendingSync] =
+    useState(0);
+
+  const [navTrigger, setNavTrigger] =
     useState(0);
 
   useEffect(() => {
@@ -605,6 +618,9 @@ export default function App() {
         ...allowedItems.map((item) => item.id),
         ...(EXTRA_ALLOWED_SCREENS[role] || []),
       ];
+      if (role === 'patient') {
+        allowedScreenIds.push('teleconsultation', 'phc-stock', 'patient-appointments', 'patient-teleconsult', 'patient-pharmacy');
+      }
       if (!allowedScreenIds.includes(screen)) {
         setScreen(DEFAULT_SCREEN[role]);
       }
@@ -795,6 +811,7 @@ export default function App() {
     patientId?: string,
     roomId?: string
   ) {
+    setNavTrigger((prev) => prev + 1);
     if (nextScreen === 'patient-profile-edit') {
       setAutoOpenEditProfile(true);
       setScreen('patient-profile');
@@ -1332,8 +1349,7 @@ export default function App() {
             />
           )}
 
-          {screen ===
-            'teleconsultation' && (
+          {(screen === 'teleconsultation' || screen === 'patient-teleconsult') && (
             <TeleconsultationRoom
               navigate={
                 navigate
@@ -1342,7 +1358,10 @@ export default function App() {
                 currentUser
               }
               patientId={
-                selectedPatientId || undefined
+                selectedPatientId ||
+                currentUser?.patientProfile?.healthId ||
+                currentUser?.id ||
+                undefined
               }
               roomId={
                 teleconsultRoomId || undefined
@@ -1350,12 +1369,28 @@ export default function App() {
             />
           )}
 
-          {screen ===
-            'patient-dashboard' && (
+          {(screen === 'patient-dashboard' ||
+            screen === 'patient-appointments' ||
+            screen === 'patient-pharmacy') && (
             <PatientMobileDashboard
               navigate={
                 navigate
               }
+              initialTab={
+                screen === 'patient-appointments'
+                  ? 'appointments'
+                  : screen === 'patient-pharmacy'
+                  ? 'pharmacy'
+                  : 'overview'
+              }
+              initialModal={
+                screen === 'patient-appointments'
+                  ? 'book'
+                  : screen === 'patient-pharmacy'
+                  ? 'stock'
+                  : null
+              }
+              navTrigger={navTrigger}
               onSOS={() =>
                 fireSOS(
                   `${roleInfo.user} (Patient)`,
@@ -1508,7 +1543,7 @@ export default function App() {
                   'Sanjivani PHC'
                 }
                 userRole={
-                  role === 'doctor' ? 'doctor' : role === 'admin' ? 'admin' : 'worker'
+                  role === 'doctor' ? 'doctor' : role === 'admin' ? 'admin' : role === 'patient' ? 'patient' : 'worker'
                 }
               />
             </div>
