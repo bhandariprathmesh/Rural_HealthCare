@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef } from "react";
 import {
   Icon,
   ConsentBadge,
@@ -6,7 +6,7 @@ import {
   Card,
   PermissionBadge,
   RecordOwnershipBanner,
-} from "../components/shared"
+} from "../components/shared";
 import {
   getCurrentUser,
   getPatientDashboardData,
@@ -20,8 +20,9 @@ import {
   getDoctorSlots,
   getActiveTeleconsultationCall,
   type DoctorSlotItem,
-} from "../api/client"
-import { syncEngine } from "../services/syncEngine"
+} from "../api/client";
+import { syncEngine } from "../services/syncEngine";
+import PhcStockCheckerModal from "../components/PhcStockCheckerModal";
 
 interface Props {
   navigate: (s: string, patientId?: string, roomId?: string) => void
@@ -112,69 +113,45 @@ export default function PatientMobileDashboard({
   loginPhone,
   currentUser,
 }: Props) {
-  const [dbUser, setDbUser] = useState<any>(currentUser || null)
-
-  const [history, setHistory] = useState<any[]>([])
-
-  const [labs, setLabs] = useState<any[]>([])
-
-  const [medsList, setMedsList] = useState<any[]>([])
-
-  const [sosConfirm, setSosConfirm] = useState(false)
-
-  const [sosSent, setSosSent] = useState(false)
-
-  const [showQR, setShowQR] = useState(false)
-
-  const [showMedsModal, setShowMedsModal] = useState(false)
-
-  const [shareToast, setShareToast] = useState<string | null>(null)
-
+  const [dbUser, setDbUser] = useState<any>(currentUser || null);
+  const [history, setHistory] = useState<any[]>([]);
+  const [labs, setLabs] = useState<any[]>([]);
+  const [medsList, setMedsList] = useState<any[]>([]);
+  const [sosConfirm, setSosConfirm] = useState(false);
+  const [sosSent, setSosSent] = useState(false);
+  const [showQR, setShowQR] = useState(false);
+  const [showMedsModal, setShowMedsModal] = useState(false);
+  const [showStockModal, setShowStockModal] = useState(false);
+  const [shareToast, setShareToast] = useState<string | null>(null);
   const [expandedConsultation, setExpandedConsultation] =
-    useState<string | null>(null)
-
-  const [doctorConsents, setDoctorConsents] = useState<any[]>([])
-
+    useState<string | null>(null);
+  const [doctorConsents, setDoctorConsents] = useState<any[]>([]);
   const [consentActionInProgress, setConsentActionInProgress] =
-    useState<string | null>(null)
-
-  const [loading, setLoading] = useState(true)
+    useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   // Appointment & OPD Queue state
-
-  const [appointments, setAppointments] = useState<any[]>([])
-
-  const [showBookModal, setShowBookModal] = useState(false)
-
-  const [facilitiesList, setFacilitiesList] = useState<any[]>([])
-
-  const [doctorsList, setDoctorsList] = useState<any[]>([])
-
-  const [bookingLoading, setBookingLoading] = useState(false)
-
-  const [bookedTokenCard, setBookedTokenCard] = useState<any | null>(null)
+  const [appointments, setAppointments] = useState<any[]>([]);
+  const [showBookModal, setShowBookModal] = useState(false);
+  const [facilitiesList, setFacilitiesList] = useState<any[]>([]);
+  const [doctorsList, setDoctorsList] = useState<any[]>([]);
+  const [bookingLoading, setBookingLoading] = useState(false);
+  const [bookedTokenCard, setBookedTokenCard] = useState<any | null>(null);
 
   // Form fields
-
-  const [bookFacilityId, setBookFacilityId] = useState("")
-
-  const [bookDoctorId, setBookDoctorId] = useState("")
-
+  const [bookFacilityId, setBookFacilityId] = useState("");
+  const [bookDoctorId, setBookDoctorId] = useState("");
   const [bookDate, setBookDate] = useState(
     () => new Date().toISOString().split("T")[0],
-  )
-
-  const [bookSlot, setBookSlot] = useState("09:00 AM - 09:30 AM")
-  const [doctorSlots, setDoctorSlots] = useState<DoctorSlotItem[]>([])
-  const [slotsLoading, setSlotsLoading] = useState(false)
-
-  const [bookReason, setBookReason] = useState("")
-
+  );
+  const [bookSlot, setBookSlot] = useState("09:00 AM - 09:30 AM");
+  const [doctorSlots, setDoctorSlots] = useState<DoctorSlotItem[]>([]);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [bookReason, setBookReason] = useState("");
   const [bookPriority, setBookPriority] = useState<"ROUTINE" | "URGENT">(
     "ROUTINE",
-  )
-
-  const [bookError, setBookError] = useState<string | null>(null)
+  );
+  const [bookError, setBookError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true)
@@ -1065,6 +1042,12 @@ export default function PatientMobileDashboard({
             action: () => setShowMedsModal(true),
           },
           {
+            label: "PHC Stock",
+            icon: "search",
+            color: "bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-xs",
+            action: () => setShowStockModal(true),
+          },
+          {
             label: "Consent",
             icon: "shield",
             color: "bg-green-50 text-green-700",
@@ -1080,7 +1063,7 @@ export default function PatientMobileDashboard({
           <button
             key={item.label}
             onClick={item.action}
-            className={`flex flex-col items-center gap-1.5 p-2 rounded-2xl ${item.color} hover:opacity-80 transition-opacity cursor-pointer`}
+            className={`flex flex-col items-center gap-1.5 p-2 sm:p-2.5 rounded-2xl ${item.color} hover:opacity-80 transition-opacity cursor-pointer`}
           >
             <Icon name={item.icon} size={18} />
             <span className="text-[10px] font-semibold text-center leading-tight">
@@ -1223,6 +1206,31 @@ export default function PatientMobileDashboard({
           </div>
         </Card>
       )}
+
+      {/* Bilingual PHC Stock Availability Check Banner */}
+      <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50 to-white border border-emerald-200/80 shadow-xs flex items-center justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs mt-0.5">
+            <Icon name="pill" size={18} />
+          </div>
+          <div>
+            <div className="text-xs font-bold text-gray-900 flex items-center gap-1.5 flex-wrap">
+              <span>Check PHC Medicines & Lab Tests Before Visiting</span>
+              <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.2 rounded">Sanjivani PHC</span>
+            </div>
+            <div className="text-[11px] text-gray-600 mt-0.5">
+              अस्पताल जाने से पहले दवा (पैरासिटामोल, ओआरएस) और जांच किट (मलेरिया, शुगर) का लाइव स्टॉक देखें।
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={() => setShowStockModal(true)}
+          className="px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shrink-0 transition-colors cursor-pointer shadow-xs active:scale-95"
+        >
+          Check Stock / जांचें →
+        </button>
+      </div>
 
       <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -1720,6 +1728,14 @@ export default function PatientMobileDashboard({
           </div>
         </div>
       )}
+
+      {/* PHC Stock & Diagnostic Availability Modal */}
+      <PhcStockCheckerModal
+        isOpen={showStockModal}
+        onClose={() => setShowStockModal(false)}
+        defaultFacilityName="Sanjivani PHC"
+        userRole="patient"
+      />
 
       {/* Book Doctor Consultation / OPD Token Modal */}
       {showBookModal && (

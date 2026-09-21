@@ -196,6 +196,57 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
     setPrescriptionList(prev => prev.filter(m => m !== medName));
   }
 
+  function getPrescriptionStockStatus(itemStr: string) {
+    const clean = itemStr.toLowerCase().trim();
+    const match = medicines.find(m =>
+      clean.includes((m.name || '').toLowerCase()) ||
+      clean.includes((m.genericName || '').toLowerCase()) ||
+      (m.name || '').toLowerCase().includes(clean)
+    );
+
+    if (!match) {
+      return {
+        status: 'EXTERNAL',
+        label: 'External / Outside Sourcing',
+        badgeClass: 'bg-gray-100 text-gray-700 border-gray-200',
+        icon: '⚪',
+        canDispense: false,
+        stockText: 'Outside Pharmacy',
+      };
+    }
+
+    if (match.stock <= 0) {
+      return {
+        status: 'OUT_OF_STOCK',
+        label: 'PHC Out of Stock — Outside Sourcing Req.',
+        badgeClass: 'bg-red-50 text-red-800 border-red-200 font-semibold',
+        icon: '🔴',
+        canDispense: false,
+        stockText: '0 in stock',
+      };
+    }
+
+    if (match.stock <= (match.minStockLevel || 10)) {
+      return {
+        status: 'LOW_STOCK',
+        label: `Low Stock at PHC (${match.stock} left)`,
+        badgeClass: 'bg-amber-50 text-amber-800 border-amber-200 font-semibold',
+        icon: '🟡',
+        canDispense: true,
+        stockText: `${match.stock} left`,
+      };
+    }
+
+    return {
+      status: 'IN_STOCK',
+      label: `Available at PHC (${match.stock} in stock)`,
+      badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200 font-semibold',
+      icon: '🟢',
+      canDispense: true,
+      stockText: `${match.stock} in stock`,
+    };
+  }
+
   async function handleSendAccessRequest() {
     const rawTargetId = patient?.rawId || patient?.id;
     if (!rawTargetId) return;
@@ -1057,56 +1108,156 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
                 </div>
 
                 <div>
-                  <label className="text-xs font-medium text-gray-700 block mb-1.5">Prescription / Medications (Rx)</label>
-                  <div className="flex gap-2 mb-2">
-                    <input
-                      value={prescriptionInput}
-                      onChange={e => setPrescriptionInput(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddPrescription(prescriptionInput); } }}
-                      placeholder="Type medicine name (e.g. Paracetamol 500mg) and press Add"
-                      className="flex-1 px-3.5 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleAddPrescription(prescriptionInput)}
-                      className="px-4 py-2 bg-gray-800 text-white rounded-xl text-xs font-bold hover:bg-gray-900"
-                    >
-                      + Add
-                    </button>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-medium text-gray-700">Prescription / Medications (Rx)</label>
+                    <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-bold">
+                      🏥 PHC Dispensary Live
+                    </span>
+                  </div>
+
+                  <div className="relative mb-2">
+                    <div className="flex gap-2">
+                      <input
+                        value={prescriptionInput}
+                        onChange={e => setPrescriptionInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddPrescription(prescriptionInput); } }}
+                        placeholder="Type medicine name (e.g. Paracetamol 500mg, ORS, Amoxicillin) and press Add"
+                        className="flex-1 px-3.5 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleAddPrescription(prescriptionInput)}
+                        className="px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        + Add Rx
+                      </button>
+                    </div>
+
+                    {/* Autocomplete suggestion dropdown when typing */}
+                    {prescriptionInput.trim().length >= 2 && (
+                      <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-20 max-h-48 overflow-y-auto divide-y divide-gray-100">
+                        {medicines
+                          .filter((m: any) =>
+                            (m.name || '').toLowerCase().includes(prescriptionInput.toLowerCase()) ||
+                            (m.genericName || '').toLowerCase().includes(prescriptionInput.toLowerCase())
+                          )
+                          .slice(0, 5)
+                          .map((m: any) => {
+                            const isOut = m.stock <= 0;
+                            const isLow = m.stock > 0 && m.stock <= (m.minStockLevel || 10);
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                onClick={() => handleAddPrescription(`${m.name} ${m.strength || ''}`)}
+                                className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center justify-between gap-2 text-xs cursor-pointer transition-colors"
+                              >
+                                <div>
+                                  <span className="font-bold text-gray-900">{m.name}</span>
+                                  <span className="text-gray-400 text-[11px] ml-1.5">{m.genericName}</span>
+                                </div>
+                                <span className={`text-[10px] px-2 py-0.5 rounded-lg border font-bold shrink-0 ${
+                                  isOut
+                                    ? 'bg-red-50 text-red-700 border-red-200'
+                                    : isLow
+                                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                    : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                }`}>
+                                  {isOut ? '✕ Out of Stock' : isLow ? `⚠️ Low: ${m.stock}` : `✓ ${m.stock} in stock`}
+                                </span>
+                              </button>
+                            );
+                          })}
+                      </div>
+                    )}
                   </div>
 
                   {medicines.length > 0 && (
                     <div className="mb-3">
-                      <div className="text-[10px] text-gray-400 mb-1">Quick Select from Pharmacy Inventory:</div>
+                      <div className="text-[10px] text-gray-400 mb-1.5 flex items-center justify-between">
+                        <span>Quick Select from PHC Dispensary Formulary:</span>
+                        <span className="text-gray-400 text-[9px]">Stock live-synced</span>
+                      </div>
                       <div className="flex flex-wrap gap-1.5">
-                        {medicines.slice(0, 6).map((m: any) => (
-                          <button
-                            key={m.id}
-                            type="button"
-                            onClick={() => handleAddPrescription(`${m.name} ${m.strength || ''}`)}
-                            className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-[11px] font-medium border border-blue-100 transition-colors"
-                          >
-                            + {m.name}
-                          </button>
-                        ))}
+                        {medicines.slice(0, 8).map((m: any) => {
+                          const isOut = m.stock <= 0;
+                          const isLow = m.stock > 0 && m.stock <= (m.minStockLevel || 10);
+                          return (
+                            <button
+                              key={m.id}
+                              type="button"
+                              onClick={() => handleAddPrescription(`${m.name} ${m.strength || ''}`)}
+                              className={`px-2.5 py-1.5 rounded-xl text-[11px] font-medium border flex items-center gap-1.5 transition-all cursor-pointer ${
+                                isOut
+                                  ? 'bg-red-50/70 hover:bg-red-100 border-red-200 text-red-700'
+                                  : isLow
+                                  ? 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800'
+                                  : 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-800'
+                              }`}
+                            >
+                              <span>+ {m.name}</span>
+                              <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold ${
+                                isOut
+                                  ? 'bg-red-200 text-red-900'
+                                  : isLow
+                                  ? 'bg-amber-200 text-amber-900'
+                                  : 'bg-emerald-200 text-emerald-900'
+                              }`}>
+                                {isOut ? '✕ Out' : isLow ? `⚠️ ${m.stock}` : `✓ ${m.stock}`}
+                              </span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
 
                   {prescriptionList.length > 0 && (
-                    <div className="flex flex-wrap gap-2 p-2 bg-gray-50 rounded-xl border border-gray-100">
-                      {prescriptionList.map((item, idx) => (
-                        <span key={idx} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-white border border-gray-200 rounded-lg text-xs text-gray-800 font-medium">
-                          💊 {item}
-                          <button
-                            type="button"
-                            onClick={() => handleRemovePrescription(item)}
-                            className="text-gray-400 hover:text-red-600 font-bold ml-1"
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
+                    <div className="space-y-2 mb-3">
+                      <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                        Prescribed Items & Dispensary Sourcing Status ({prescriptionList.length}):
+                      </div>
+
+                      <div className="space-y-1.5">
+                        {prescriptionList.map((item, idx) => {
+                          const stockInfo = getPrescriptionStockStatus(item);
+                          return (
+                            <div
+                              key={idx}
+                              className="flex items-center justify-between gap-2 p-2 bg-white border border-gray-200 rounded-xl shadow-xs"
+                            >
+                              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                                <span className="text-xs font-bold text-gray-900">
+                                  💊 {item}
+                                </span>
+                                <span className={`text-[10px] px-2 py-0.5 rounded-lg border flex items-center gap-1 ${stockInfo.badgeClass}`}>
+                                  <span>{stockInfo.icon}</span>
+                                  <span>{stockInfo.label}</span>
+                                </span>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleRemovePrescription(item)}
+                                className="text-gray-400 hover:text-red-600 font-bold px-1.5 py-0.5 rounded-lg hover:bg-red-50 transition-colors cursor-pointer shrink-0"
+                                title="Remove medication"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Outside sourcing alert if any prescribed item is out of stock */}
+                      {prescriptionList.some(item => getPrescriptionStockStatus(item).status === 'OUT_OF_STOCK') && (
+                        <div className="p-2.5 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800 flex items-start gap-2">
+                          <span className="text-sm shrink-0">⚠️</span>
+                          <div>
+                            <strong>Dispensary Stock Notice:</strong> One or more prescribed medicines are currently out of stock at Sanjivani PHC. The patient will be provided an outside sourcing slip for the Jan Aushadhi Kendra or community pharmacy.
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

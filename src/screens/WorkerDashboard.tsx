@@ -24,12 +24,14 @@ import {
   getMchDueList,
   updateMchMilestone,
   createMchRecord,
+  getFacilityStockSummary,
   bookAppointment,
   getDoctorSlots,
   type DoctorSlotItem,
-} from "../api/client"
-import type { MchDueAlertItem, MchRecord } from "../types"
-import { syncEngine } from "../services/syncEngine"
+} from "../api/client";
+import type { MchDueAlertItem, MchRecord } from "../types";
+import { syncEngine } from "../services/syncEngine";
+import PhcStockCheckerModal from "../components/PhcStockCheckerModal";
 
 interface ActiveSosAlert {
   id: string
@@ -225,7 +227,9 @@ export default function WorkerDashboard({
 
   const [referrals, setReferrals] = useState<any[]>([])
 
-  const [dashboardStats, setDashboardStats] = useState<any>(null)
+  const [dashboardStats, setDashboardStats] = useState<any>(null);
+  const [stockModalOpen, setStockModalOpen] = useState(false);
+  const [facilityStock, setFacilityStock] = useState<any>(null);
 
   const [loading, setLoading] = useState(true)
   const [onDutyDoctors, setOnDutyDoctors] = useState<Doctor[]>(DEFAULT_DOCTORS)
@@ -425,6 +429,20 @@ export default function WorkerDashboard({
       mounted = false
     }
   }, [])
+
+  useEffect(() => {
+    let mounted = true;
+    getFacilityStockSummary('HFR-2024-SANJIVANI')
+      .then((data) => {
+        if (mounted && data) {
+          setFacilityStock(data);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const fetchDoctorsRoster = async () => {
     try {
@@ -1335,6 +1353,14 @@ export default function WorkerDashboard({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setStockModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+          >
+            <Icon name="pill" size={13} className="text-emerald-700" />
+            PHC Stock
+          </button>
           {isOffline && (
             <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 font-semibold flex items-center gap-2">
               <Icon name="wifi_off" size={14} />
@@ -1538,7 +1564,7 @@ export default function WorkerDashboard({
         </div>
       </Card>
 
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
           {
             label: "Register Patient",
@@ -1567,9 +1593,9 @@ export default function WorkerDashboard({
             icon: "calendar",
 
             onClick: () => {
-              setSelectedDoctorForBooking(onDutyDoctors[0] || null)
+              setSelectedDoctorForBooking(onDutyDoctors[0] || null);
 
-              setShowWorkerBookModal(true)
+              setShowWorkerBookModal(true);
             },
 
             color: "bg-teal-600 text-white hover:bg-teal-700 shadow-sm",
@@ -1596,6 +1622,13 @@ export default function WorkerDashboard({
               ? "bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100"
               : "bg-gray-100 text-gray-700 hover:bg-gray-200",
           },
+
+          {
+            label: 'PHC Stock',
+            icon: 'pill',
+            onClick: () => setStockModalOpen(true),
+            color: 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100',
+          },
         ].map((action) => (
           <button
             key={action.label}
@@ -1608,6 +1641,54 @@ export default function WorkerDashboard({
           </button>
         ))}
       </div>
+
+      {/* PHC Stock & Diagnostic Availability Banner Widget */}
+      <Card className="p-4 bg-gradient-to-r from-emerald-50/70 via-teal-50/50 to-white border-emerald-100/80">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-sm shrink-0">
+              <Icon name="pill" size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-display text-sm font-bold text-gray-900">
+                  PHC Stock & Diagnostic Availability
+                </h3>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-200">
+                  Sanjivani PHC
+                </span>
+              </div>
+              <p className="text-xs text-gray-600 mt-0.5">
+                {facilityStock?.stats ? (
+                  <>
+                    <span className="text-emerald-700 font-semibold">{facilityStock.stats.medicines.inStock} meds in stock</span>
+                    {facilityStock.stats.medicines.outOfStock > 0 && (
+                      <span className="text-red-600 font-semibold ml-1.5">· {facilityStock.stats.medicines.outOfStock} out</span>
+                    )}
+                    <span className="mx-1.5 text-gray-300">|</span>
+                    <span className="text-teal-700 font-semibold">{facilityStock.stats.diagnostics.available} lab kits ready</span>
+                    {facilityStock.stats.diagnostics.outOfStock > 0 && (
+                      <span className="text-red-600 font-semibold ml-1.5">· {facilityStock.stats.diagnostics.outOfStock} unavailable</span>
+                    )}
+                  </>
+                ) : (
+                  'Live stock for Paracetamol, ORS, Amoxicillin & Malaria, Hb, Glucose kits'
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+            <button
+              onClick={() => setStockModalOpen(true)}
+              className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer active:scale-95"
+            >
+              <Icon name="search" size={13} />
+              Open Stock Checker →
+            </button>
+          </div>
+        </div>
+      </Card>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatCard
@@ -2756,6 +2837,13 @@ export default function WorkerDashboard({
       </div>
     </div>
   )}
+
+      <PhcStockCheckerModal
+        isOpen={stockModalOpen}
+        onClose={() => setStockModalOpen(false)}
+        defaultFacilityName="Sanjivani PHC"
+        userRole="worker"
+      />
 
       {/* ASHA-Assisted OPD Booking Modal */}
       {showWorkerBookModal && (
