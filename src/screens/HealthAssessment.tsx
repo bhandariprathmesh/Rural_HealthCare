@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Icon, Card, HealthIDCard } from '../components/shared';
 import {
   createConsultation,
@@ -9,10 +9,13 @@ import {
   getSymptoms,
   predictRisk,
   generateAiAssessment,
+  getDoctorAppointments,
+  getDoctorDashboardData,
   type StandardizedSymptom,
   type RiskPredictionResponse,
 } from '../api/client';
 import { saveOfflineConsultation, syncEngine } from '../services/syncEngine';
+import { parseClinicalSpeech, type ParsedClinicalData } from '../utils/clinicalSpeechParser';
 
 interface Props {
   navigate: (s: string) => void;
@@ -71,8 +74,54 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
   const [accessReason, setAccessReason] = useState('');
   const [accessScope, setAccessScope] = useState<string[]>(['Basic Information', 'Consultation History']);
 
+  // Doctor Queue & Patient Prioritization State
+  const [doctorAppointments, setDoctorAppointments] = useState<any[]>([]);
+  const [doctorPatients, setDoctorPatients] = useState<any[]>([]);
+  const [patientFilterTab, setPatientFilterTab] = useState<'all' | 'my-appointments' | 'consented'>('all');
+
+  // Multilingual Voice-to-Text Triage Assistant State ("Vernacular AI for ASHAs")
+  const [voiceLang, setVoiceLang] = useState<'hi-IN' | 'mr-IN' | 'en-IN'>('hi-IN');
+  const [isListening, setIsListening] = useState(false);
+  const [speechTranscript, setSpeechTranscript] = useState('');
+  const [interimTranscript, setInterimTranscript] = useState('');
+  const [parsedVoiceData, setParsedVoiceData] = useState<ParsedClinicalData | null>(null);
+  const [speechError, setSpeechError] = useState<string | null>(null);
+  const [autoFilledNotice, setAutoFilledNotice] = useState<string | null>(null);
+  const recognitionRef = useRef<any>(null);
+
   useEffect(() => {
-    getSymptoms().then(setSymptomCatalog).catch(() => {});
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {}
+      }
+    };
+  }, []);
+
+const CANONICAL_TINGLING_SYMPTOM: StandardizedSymptom = {
+  id: 'sym-tng-01',
+  code: 'SYM-TNG-01',
+  name: 'Tingling / Numbness',
+  nameHi: 'झनझनाहट / सुन्नपन / मुंग्या येणे',
+  category: 'Neurological',
+  synonyms: ['mungya', 'tingling', 'numbness', 'jhanjhanahat', 'sunn', 'pins and needles'],
+  icd10Code: 'R20.2',
+  defaultWeight: 1.0,
+};
+
+  useEffect(() => {
+    getSymptoms()
+      .then((list) => {
+        const symptomsList = list && list.length > 0 ? [...list] : [];
+        if (!symptomsList.some((s) => s.name === 'Tingling / Numbness' || s.code === 'SYM-TNG-01')) {
+          symptomsList.push(CANONICAL_TINGLING_SYMPTOM);
+        }
+        setSymptomCatalog(symptomsList);
+      })
+      .catch(() => {
+        setSymptomCatalog([CANONICAL_TINGLING_SYMPTOM]);
+      });
     getCurrentUser()
       .then((user) => {
         setDbUser(user);
@@ -80,6 +129,25 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
           setSelectedPatient(user.patientProfile);
           setStep('vitals');
         } else {
+          // If Doctor, load their active appointments and consented patients for top prioritization
+          if (user?.role === 'DOCTOR') {
+            const docId = user?.doctorProfile?.id || user?.id;
+            if (docId) {
+              getDoctorAppointments(docId)
+                .then((apts) => {
+                  if (Array.isArray(apts)) setDoctorAppointments(apts);
+                })
+                .catch(() => {});
+              getDoctorDashboardData(docId)
+                .then((dash) => {
+                  if (dash?.patients && Array.isArray(dash.patients)) {
+                    setDoctorPatients(dash.patients);
+                  }
+                })
+                .catch(() => {});
+            }
+          }
+
           getPatients().then((pts) => {
             setRealPatients(pts || []);
             if (patientId) {
@@ -125,6 +193,552 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
     }
   }
 
+  function startVoiceRecognition() {
+    setSpeechError(null);
+    setAutoFilledNotice(null);
+
+    const SpeechRecognitionClass =
+      typeof window !== 'undefined'
+        ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+        : null;
+
+    if (!SpeechRecognitionClass) {
+      setSpeechError(
+        'Speech recognition is not supported in this browser. Please use Google Chrome, Microsoft Edge, or Android Chrome, or enter details manually below.'
+      );
+      return;
+    }
+
+    try {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {}
+      }
+
+      const recognition = new SpeechRecognitionClass();
+      recognition.lang = voiceLang;
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        setSpeechError(null);
+      };
+
+      recognition.onresult = (event: any) => {
+        let finalChunk = '';
+        let currentInterim = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const result = event.results[i];
+          if (result.isFinal) {
+            finalChunk += result[0].transcript + ' ';
+          } else {
+            currentInterim += result[0].transcript;
+          }
+        }
+
+        if (finalChunk) {
+          setSpeechTranscript((prev) => {
+            const combined = (prev + ' ' + finalChunk).replace(/\s+/g, ' ').trim();
+            const parsed = parseClinicalSpeech(combined);
+            setParsedVoiceData(parsed);
+            return combined;
+          });
+        }
+
+        setInterimTranscript(currentInterim);
+
+        if (currentInterim) {
+          setSpeechTranscript((prev) => {
+            const fullSpoken = (prev + ' ' + currentInterim).replace(/\s+/g, ' ').trim();
+            const parsed = parseClinicalSpeech(fullSpoken);
+            setParsedVoiceData(parsed);
+            return prev;
+          });
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        console.warn('Speech recognition error event:', event.error);
+        if (event.error === 'not-allowed') {
+          setSpeechError(
+            'Microphone access was denied. Please allow microphone permissions in your browser to use voice input.'
+          );
+        } else if (event.error === 'no-speech') {
+          setSpeechError('No speech was detected. Please tap the microphone and speak again.');
+        } else if (event.error === 'network') {
+          setSpeechError(
+            'Speech recognition network unavailable. Note: Browser speech recognition may require online connectivity. Manual entry remains fully functional.'
+          );
+        } else if (event.error !== 'aborted') {
+          setSpeechError(`Speech recognition notice: ${event.error || 'Stopped'}`);
+        }
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        setInterimTranscript('');
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err: any) {
+      console.error('Failed to start speech recognition instance:', err);
+      setSpeechError(err.message || 'Unable to start speech recognition.');
+      setIsListening(false);
+    }
+  }
+
+  function stopVoiceRecognition() {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
+    }
+    setIsListening(false);
+    setInterimTranscript('');
+  }
+
+  function handleAutoFill() {
+    if (!parsedVoiceData) return;
+
+    let symptomsAdded = 0;
+    let vitalsAdded = 0;
+
+    // 1. Auto-fill detected symptoms into form state
+    const toAddNames: string[] = [];
+    const toAddCodes: string[] = [];
+
+    for (const sym of parsedVoiceData.symptoms) {
+      if (!selectedSymptoms.includes(sym)) {
+        toAddNames.push(sym);
+        const matched = symptomCatalog.find(
+          (item) =>
+            item.name.toLowerCase() === sym.toLowerCase() ||
+            item.code?.toLowerCase() === sym.toLowerCase()
+        );
+        if (matched?.code && !selectedSymptomCodes.includes(matched.code)) {
+          toAddCodes.push(matched.code);
+        }
+      }
+    }
+
+    if (toAddNames.length > 0) {
+      setSelectedSymptoms((prev) => [...prev, ...toAddNames]);
+      if (toAddCodes.length > 0) {
+        setSelectedSymptomCodes((prev) => [...prev, ...toAddCodes]);
+      }
+      symptomsAdded = toAddNames.length;
+    }
+
+    // 2. Safely populate detected vitals (fill empty fields, preserve already filled ones)
+    setVitals((prev) => {
+      const updated = { ...prev };
+      if (parsedVoiceData.vitals.temp && !prev.temp) {
+        updated.temp = parsedVoiceData.vitals.temp;
+        vitalsAdded++;
+      }
+      if (parsedVoiceData.vitals.bp && !prev.bp) {
+        updated.bp = parsedVoiceData.vitals.bp;
+        vitalsAdded++;
+      }
+      if (parsedVoiceData.vitals.hr && !prev.hr) {
+        updated.hr = parsedVoiceData.vitals.hr;
+        vitalsAdded++;
+      }
+      if (parsedVoiceData.vitals.spo2 && !prev.spo2) {
+        updated.spo2 = parsedVoiceData.vitals.spo2;
+        vitalsAdded++;
+      }
+      if (parsedVoiceData.vitals.weight && !prev.weight) {
+        updated.weight = parsedVoiceData.vitals.weight;
+        vitalsAdded++;
+      }
+      return updated;
+    });
+
+    // 3. Auto-fill duration if recognized
+    if (parsedVoiceData.duration) {
+      setDuration(parsedVoiceData.duration);
+    }
+
+    // 4. Record qualitative findings and body locations into observations (e.g. High BP reported, Hand location)
+    const notesToAppend: string[] = [];
+    if (parsedVoiceData.qualitativeFindings && parsedVoiceData.qualitativeFindings.length > 0) {
+      notesToAppend.push(...parsedVoiceData.qualitativeFindings);
+    }
+    if (parsedVoiceData.locations && parsedVoiceData.locations.length > 0) {
+      notesToAppend.push(`Location(s) reported: ${parsedVoiceData.locations.join(', ')}`);
+    }
+
+    if (notesToAppend.length > 0) {
+      setObs((prev) => {
+        const newItems = notesToAppend.filter((item) => !prev.includes(item));
+        if (newItems.length === 0) return prev;
+        return prev ? `${prev}. ${newItems.join('; ')}` : newItems.join('; ');
+      });
+    }
+
+    // 5. Build user-friendly feedback message
+    const msgParts: string[] = [];
+    if (symptomsAdded > 0) {
+      msgParts.push(`Successfully auto-filled ${symptomsAdded} symptom${symptomsAdded !== 1 ? 's' : ''}`);
+    } else if (parsedVoiceData.symptoms.length > 0) {
+      msgParts.push(
+        `All ${parsedVoiceData.symptoms.length} detected symptom${parsedVoiceData.symptoms.length !== 1 ? 's are' : ' is'} already selected`
+      );
+    }
+
+    if (vitalsAdded > 0) {
+      msgParts.push(`${vitalsAdded} vital sign${vitalsAdded !== 1 ? 's' : ''}`);
+    }
+    if (parsedVoiceData.duration) {
+      msgParts.push(`Duration: ${parsedVoiceData.duration}`);
+    }
+    if (notesToAppend.length > 0) {
+      msgParts.push(`Notes: ${notesToAppend.join(', ')}`);
+    }
+
+    setAutoFilledNotice(
+      msgParts.length > 0
+        ? `✓ ${msgParts.join(' · ')}. Review and edit as needed.`
+        : `✓ Voice details reviewed. No new symptoms or vitals needed updating.`
+    );
+  }
+
+  const renderVoiceAssistantCard = () => (
+    <div className="bg-gradient-to-br from-teal-50/80 via-brand-50/50 to-indigo-50/60 border border-brand-200/90 rounded-2xl p-4 shadow-sm space-y-3.5 transition-all">
+      {/* Header: Title & Language Selector */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-brand-100/80 pb-3">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-xl bg-brand-600 text-white flex items-center justify-center shadow-xs">
+            <Icon name="mic" size={16} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-gray-900">Multilingual Voice Triage</span>
+              <span className="text-[10px] font-semibold px-2 py-0.5 bg-brand-100 text-brand-800 rounded-full">
+                Vernacular AI
+              </span>
+            </div>
+            <p className="text-[11px] text-gray-600">
+              Speak clinical notes in Hindi, Marathi, or English
+            </p>
+          </div>
+        </div>
+
+        {/* Language selector buttons */}
+        <div className="inline-flex rounded-xl bg-white/90 p-1 border border-brand-200/80 shadow-xs self-start sm:self-auto">
+          {[
+            { code: 'hi-IN', label: 'हिन्दी (Hindi)' },
+            { code: 'mr-IN', label: 'मराठी (Marathi)' },
+            { code: 'en-IN', label: 'English' },
+          ].map((l) => (
+            <button
+              key={l.code}
+              type="button"
+              disabled={isListening}
+              onClick={() => {
+                setVoiceLang(l.code as any);
+                if (recognitionRef.current) {
+                  recognitionRef.current.lang = l.code;
+                }
+              }}
+              className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg transition-all cursor-pointer ${
+                voiceLang === l.code
+                  ? 'bg-brand-600 text-white shadow-xs'
+                  : 'text-gray-600 hover:text-brand-800 hover:bg-brand-50'
+              } disabled:opacity-60`}
+            >
+              {l.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Control & Live Audio Wave Bar */}
+      <div className="flex items-center justify-between gap-3 bg-white/95 rounded-xl p-3 border border-gray-200/80">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={isListening ? stopVoiceRecognition : startVoiceRecognition}
+            className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all cursor-pointer shadow-md ${
+              isListening
+                ? 'bg-rose-600 hover:bg-rose-700 text-white ring-4 ring-rose-200 animate-pulse'
+                : 'bg-brand-600 hover:bg-brand-700 text-white hover:scale-105 active:scale-95'
+            }`}
+            title={isListening ? 'Click to stop listening' : 'Click to start speaking'}
+          >
+            <Icon name={isListening ? 'pause' : 'mic'} size={22} />
+          </button>
+
+          <div>
+            <div className="flex items-center gap-2">
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  isListening ? 'bg-rose-500 animate-ping' : speechTranscript ? 'bg-emerald-500' : 'bg-gray-300'
+                }`}
+              />
+              <span className="text-xs font-bold text-gray-800">
+                {isListening
+                  ? 'Listening… बोलिए / बोला'
+                  : speechTranscript
+                  ? 'Voice Input Complete'
+                  : 'Start Voice Input'}
+              </span>
+            </div>
+            <p className="text-[11px] text-gray-500">
+              {isListening
+                ? 'Speaking clinical notes live… tap microphone when done'
+                : speechTranscript
+                ? 'Review detected findings below and tap Auto-Fill Symptoms'
+                : 'Tap microphone and describe patient symptoms/vitals'}
+            </p>
+          </div>
+        </div>
+
+        {/* Audio Wave Indicator (pure CSS) */}
+        {isListening && (
+          <div className="flex items-center gap-1 h-6 px-3 bg-brand-50 border border-brand-200 rounded-xl" title="Live audio stream active">
+            <span className="w-1 bg-brand-600 rounded-full animate-pulse h-2.5" />
+            <span className="w-1 bg-brand-600 rounded-full animate-bounce h-5" />
+            <span className="w-1 bg-brand-600 rounded-full animate-pulse h-3.5" />
+            <span className="w-1 bg-brand-600 rounded-full animate-bounce h-5" />
+            <span className="w-1 bg-brand-600 rounded-full animate-pulse h-3" />
+          </div>
+        )}
+      </div>
+
+      {/* Speech Error Banner */}
+      {speechError && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-start justify-between gap-2">
+          <div className="flex items-start gap-2">
+            <Icon name="alert" size={15} className="text-amber-600 shrink-0 mt-0.5" />
+            <span>{speechError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSpeechError(null)}
+            className="text-amber-600 hover:text-amber-900 font-bold cursor-pointer"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* Live Transcription Preview */}
+      {(speechTranscript || interimTranscript) ? (
+        <div className="bg-white/95 rounded-xl p-3 border border-brand-200/70 space-y-1.5">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-gray-500">
+            <span className="flex items-center gap-1.5">
+              <Icon name="clipboard" size={13} className="text-brand-600" />
+              Live Transcription Preview
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setSpeechTranscript('');
+                setInterimTranscript('');
+                setParsedVoiceData(null);
+                setAutoFilledNotice(null);
+              }}
+              className="text-[10px] text-gray-400 hover:text-red-600 transition-colors cursor-pointer"
+            >
+              Clear
+            </button>
+          </div>
+          <p className="text-xs text-gray-800 leading-relaxed font-sans italic bg-gray-50/70 p-2.5 rounded-lg border border-gray-100">
+            "{speechTranscript}"
+            {interimTranscript && (
+              <span className="text-brand-600 font-semibold not-italic animate-pulse">
+                {' '}
+                {interimTranscript}…
+              </span>
+            )}
+          </p>
+        </div>
+      ) : (
+        <div className="text-[11px] text-gray-400 px-1 italic">
+          Try saying: <span className="text-gray-600 font-medium">"3 din se tez bukhar hai aur ulti ho rahi hai"</span> or <span className="text-gray-600 font-medium">"BP 150 over 95 hai aur sar dard"</span>
+        </div>
+      )}
+
+      {/* Unrecognized Clinical Phrase Alert */}
+      {parsedVoiceData?.unrecognized && (
+        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2.5 shadow-xs">
+          <Icon name="alert" size={16} className="text-amber-600 shrink-0 mt-0.5" />
+          <div>
+            <span className="font-bold">Unrecognized clinical phrase — please review manually.</span>
+            <p className="text-[11px] text-amber-700 mt-0.5">
+              The transcript is preserved above. You can select symptoms directly from the checklist below.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Detected Clinical Findings Preview */}
+      {parsedVoiceData && (parsedVoiceData.symptoms.length > 0 || Object.keys(parsedVoiceData.vitals).length > 0 || parsedVoiceData.duration || (parsedVoiceData.qualitativeFindings && parsedVoiceData.qualitativeFindings.length > 0)) && (
+        <div className="bg-white/95 rounded-xl p-3.5 border border-brand-300 shadow-xs space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-gray-700 uppercase tracking-wide">
+              Clinical Entities Detected from Voice
+            </span>
+            <span className="text-[10px] font-mono bg-brand-50 text-brand-700 px-2 py-0.5 rounded-md font-semibold border border-brand-200">
+              {parsedVoiceData.symptoms.length} Symptoms · {Object.keys(parsedVoiceData.vitals).length} Vitals{parsedVoiceData.qualitativeFindings && parsedVoiceData.qualitativeFindings.length > 0 ? ` · ${parsedVoiceData.qualitativeFindings.length} Notes` : ''}
+            </span>
+          </div>
+
+          {/* Symptoms Chips */}
+          {parsedVoiceData.symptoms.length > 0 && (
+            <div>
+              <span className="text-[10px] font-semibold text-gray-500 block mb-1">
+                Detected Symptoms:
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {parsedVoiceData.symptoms.map((s) => (
+                  <span
+                    key={s}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold rounded-lg"
+                  >
+                    <Icon name="check" size={12} className="text-emerald-600" />
+                    <span>{s}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Body Location(s) Detected */}
+          {parsedVoiceData.locations && parsedVoiceData.locations.length > 0 && (
+            <div>
+              <span className="text-[10px] font-semibold text-gray-500 block mb-1">
+                Reported Body Location(s):
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {parsedVoiceData.locations.map((loc) => (
+                  <span
+                    key={loc}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs font-semibold rounded-lg"
+                  >
+                    <Icon name="user" size={12} className="text-indigo-600" />
+                    <span>Location: {loc}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Qualitative Clinical Observations (e.g. Reported High BP) */}
+          {parsedVoiceData.qualitativeFindings && parsedVoiceData.qualitativeFindings.length > 0 && (
+            <div>
+              <span className="text-[10px] font-semibold text-gray-500 block mb-1">
+                Reported Clinical Findings:
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {parsedVoiceData.qualitativeFindings.map((q) => (
+                  <span
+                    key={q}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 border border-amber-300 text-amber-900 text-xs font-semibold rounded-lg"
+                  >
+                    <Icon name="alert" size={12} className="text-amber-600 shrink-0" />
+                    <span>{q}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Vitals Grid */}
+          {Object.keys(parsedVoiceData.vitals).length > 0 && (
+            <div>
+              <span className="text-[10px] font-semibold text-gray-500 block mb-1">
+                Detected Vital Signs:
+              </span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {parsedVoiceData.vitals.temp && (
+                  <div className="p-2 bg-blue-50/80 border border-blue-200 rounded-lg text-center">
+                    <div className="text-[10px] text-blue-700 font-semibold">Temperature</div>
+                    <div className="text-xs font-bold text-blue-950">{parsedVoiceData.vitals.temp}°</div>
+                  </div>
+                )}
+                {parsedVoiceData.vitals.bp && (
+                  <div className="p-2 bg-blue-50/80 border border-blue-200 rounded-lg text-center">
+                    <div className="text-[10px] text-blue-700 font-semibold">Blood Pressure</div>
+                    <div className="text-xs font-bold text-blue-950">{parsedVoiceData.vitals.bp}</div>
+                  </div>
+                )}
+                {parsedVoiceData.vitals.hr && (
+                  <div className="p-2 bg-blue-50/80 border border-blue-200 rounded-lg text-center">
+                    <div className="text-[10px] text-blue-700 font-semibold">Heart Rate</div>
+                    <div className="text-xs font-bold text-blue-950">{parsedVoiceData.vitals.hr} bpm</div>
+                  </div>
+                )}
+                {parsedVoiceData.vitals.spo2 && (
+                  <div className="p-2 bg-blue-50/80 border border-blue-200 rounded-lg text-center">
+                    <div className="text-[10px] text-blue-700 font-semibold">SpO2</div>
+                    <div className="text-xs font-bold text-blue-950">{parsedVoiceData.vitals.spo2}%</div>
+                  </div>
+                )}
+                {parsedVoiceData.vitals.weight && (
+                  <div className="p-2 bg-blue-50/80 border border-blue-200 rounded-lg text-center">
+                    <div className="text-[10px] text-blue-700 font-semibold">Weight</div>
+                    <div className="text-xs font-bold text-blue-950">{parsedVoiceData.vitals.weight} kg</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Duration */}
+          {parsedVoiceData.duration && (
+            <div className="text-xs text-gray-700 flex items-center gap-1.5">
+              <span className="text-[10px] font-semibold text-gray-500">Detected Duration:</span>
+              <span className="font-bold text-brand-800 bg-brand-50 px-2 py-0.5 rounded border border-brand-200 text-[11px]">
+                {parsedVoiceData.duration}
+              </span>
+            </div>
+          )}
+
+          {/* Auto-Fill Action Button */}
+          <div className="pt-1 flex items-center justify-between gap-3 flex-wrap">
+            <p className="text-[11px] text-gray-500 italic">
+              Review above items, then tap Auto-Fill Symptoms to populate form.
+            </p>
+            <button
+              type="button"
+              onClick={handleAutoFill}
+              className="px-4 py-2.5 bg-brand-600 hover:bg-brand-700 active:bg-brand-800 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2 cursor-pointer hover:shadow-md"
+            >
+              <Icon name="check" size={14} />
+              Auto-Fill Symptoms
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Auto-Fill Success Notice */}
+      {autoFilledNotice && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-semibold flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5">
+            <Icon name="check" size={14} className="text-emerald-600 shrink-0" />
+            <span>{autoFilledNotice}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAutoFilledNotice(null)}
+            className="text-emerald-700 hover:text-emerald-950 font-bold cursor-pointer"
+          >
+            ×
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
   const inputClass =
     'w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 bg-white font-mono';
 
@@ -147,17 +761,79 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
       const normName = (p.name || '').trim().toLowerCase();
       if (!normName || seen.has(normName)) continue;
       seen.add(normName);
-      list.push(p);
+
+      // Match appointment for logged-in doctor
+      const appt = doctorAppointments.find(
+        (a) =>
+          (a.patientId === p.id ||
+            a.patient?.id === p.id ||
+            a.patient?.healthId === p.healthId ||
+            a.patientId === p.healthId) &&
+          a.status !== 'CANCELLED'
+      );
+
+      const isMyPatient = doctorPatients.some(
+        (dp) => dp.id === p.id || dp.healthId === p.healthId
+      );
+
+      let priorityScore = 10;
+      if (appt) {
+        if (appt.status === 'IN_PROGRESS') priorityScore = 100;
+        else if (appt.status === 'CONFIRMED' || appt.status === 'PENDING') priorityScore = 90;
+        else priorityScore = 80;
+      } else if (isMyPatient) {
+        priorityScore = 50;
+      }
+
+      list.push({
+        ...p,
+        appointment: appt,
+        isMyPatient,
+        priorityScore,
+      });
     }
-    if (!patientSearch.trim()) return list;
-    const q = patientSearch.toLowerCase().trim();
-    return list.filter((p: any) =>
-      (p.name && p.name.toLowerCase().includes(q)) ||
-      (p.healthId && p.healthId.toLowerCase().includes(q)) ||
-      (p.phone && p.phone.includes(q)) ||
-      (p.village && p.village.toLowerCase().includes(q))
-    );
-  }, [realPatients, patientSearch]);
+
+    // Filter by tab if doctor
+    let tabFiltered = list;
+    if (dbUser?.role === 'DOCTOR') {
+      if (patientFilterTab === 'my-appointments') {
+        tabFiltered = list.filter((p) => Boolean(p.appointment));
+      } else if (patientFilterTab === 'consented') {
+        tabFiltered = list.filter((p) => Boolean(p.isMyPatient || p.appointment));
+      }
+    }
+
+    // Filter by search query
+    let searchFiltered = tabFiltered;
+    if (patientSearch.trim()) {
+      const q = patientSearch.toLowerCase().trim();
+      searchFiltered = tabFiltered.filter(
+        (p: any) =>
+          (p.name && p.name.toLowerCase().includes(q)) ||
+          (p.healthId && p.healthId.toLowerCase().includes(q)) ||
+          (p.phone && p.phone.includes(q)) ||
+          (p.village && p.village.toLowerCase().includes(q)) ||
+          (p.appointment && (
+            `token #${p.appointment.tokenNumber}`.toLowerCase().includes(q) ||
+            `token ${p.appointment.tokenNumber}`.toLowerCase().includes(q) ||
+            (p.appointment.timeSlot && p.appointment.timeSlot.toLowerCase().includes(q))
+          ))
+      );
+    }
+
+    // Sort: Pinned appointed patients at top -> Consented -> General
+    return searchFiltered.sort((a, b) => {
+      const diff = b.priorityScore - a.priorityScore;
+      if (diff !== 0) return diff;
+      if (a.appointment && b.appointment) {
+        const prioOrder: Record<string, number> = { HIGH_RISK: 0, URGENT: 1, ROUTINE: 2 };
+        const pDiff = (prioOrder[a.appointment.priority] ?? 9) - (prioOrder[b.appointment.priority] ?? 9);
+        if (pDiff !== 0) return pDiff;
+        return (a.appointment.tokenNumber || 0) - (b.appointment.tokenNumber || 0);
+      }
+      return (a.name || '').localeCompare(b.name || '');
+    });
+  }, [realPatients, patientSearch, doctorAppointments, doctorPatients, patientFilterTab, dbUser]);
 
   async function handleSelectPatientForAssessment(p: any) {
     setCheckingAccess(true);
@@ -171,9 +847,21 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
       const res = await getPatientByHealthId(targetLookup, 'health_assessment');
       
       const isDoctor = dbUser?.role === 'DOCTOR';
-      // For doctor, access requires explicit active consent; for worker, requires worker authorization
+      const hasApptWithDoc = Boolean(
+        p.appointment ||
+          doctorAppointments.some(
+            (a) =>
+              (a.patientId === p.id ||
+                a.patient?.id === p.id ||
+                a.patient?.healthId === p.healthId ||
+                a.patientId === p.healthId) &&
+              a.status !== 'CANCELLED'
+          )
+      );
+
+      // If patient booked an appointment with this doctor, clinical access is pre-authorized for the OPD consultation
       const needsConsent = isDoctor
-        ? (!res?.hasAccess || !res?.activeConsent)
+        ? (!hasApptWithDoc && (!res?.hasAccess || !res?.activeConsent))
         : (res?.hasAccess === false || res?.patient?.hasAccess === false);
 
       if (needsConsent) {
@@ -197,7 +885,24 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
         setStep('vitals');
       }
     } catch {
-      setAccessBlockedPatient(p);
+      // If error but patient had booked appointment, still allow proceeding
+      const hasApptWithDoc = Boolean(
+        p.appointment ||
+          doctorAppointments.some(
+            (a) =>
+              (a.patientId === p.id ||
+                a.patient?.id === p.id ||
+                a.patient?.healthId === p.healthId ||
+                a.patientId === p.healthId) &&
+              a.status !== 'CANCELLED'
+          )
+      );
+      if (hasApptWithDoc) {
+        setSelectedPatient(p);
+        setStep('vitals');
+      } else {
+        setAccessBlockedPatient(p);
+      }
     } finally {
       setCheckingAccess(false);
     }
@@ -564,36 +1269,107 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
               </div>
             )}
 
-            <div className="space-y-2 max-h-72 overflow-y-auto">
+            {/* Doctor Specific Filter Tabs */}
+            {dbUser?.role === 'DOCTOR' && (
+              <div className="flex gap-1.5 overflow-x-auto pb-1">
+                {[
+                  { id: 'all', label: `All Patients (${realPatients.length})` },
+                  {
+                    id: 'my-appointments',
+                    label: `⚡ Today's OPD Queue (${doctorAppointments.filter((a) => a.status !== 'CANCELLED').length})`,
+                  },
+                  {
+                    id: 'consented',
+                    label: `✓ Consented (${doctorPatients.length})`,
+                  },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setPatientFilterTab(tab.id as any)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                      patientFilterTab === tab.id
+                        ? 'bg-teal-700 text-white shadow-xs'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
               {filteredPatients.length === 0 ? (
                 <div className="p-4 text-center text-xs text-gray-400">
                   {patientSearch ? `No patients found matching "${patientSearch}"` : 'Loading patients from database…'}
                 </div>
               ) : (
-                filteredPatients.map((p: any) => (
-                  <button
-                    key={p.id || p.healthId}
-                    onClick={() => handleSelectPatientForAssessment(p)}
-                    className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:border-brand-300 hover:bg-brand-50 transition-all text-left cursor-pointer"
-                  >
-                    <div className="w-9 h-9 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-semibold text-sm shrink-0">
-                      {String(p.name || 'P')
-                        .split(' ')
-                        .map((w: string) => w[0])
-                        .join('')
-                        .slice(0, 2)
-                        .toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm text-gray-900 truncate">{p.name}</div>
-                      <div className="text-xs text-gray-500">
-                        {p.age || '--'} yrs · {p.village || p.address || 'N/A'}
+                filteredPatients.map((p: any) => {
+                  const hasAppt = Boolean(p.appointment);
+                  const isConsented = Boolean(p.isMyPatient);
+
+                  return (
+                    <button
+                      key={p.id || p.healthId}
+                      onClick={() => handleSelectPatientForAssessment(p)}
+                      className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left cursor-pointer ${
+                        hasAppt
+                          ? 'border-teal-300 bg-teal-50/40 hover:bg-teal-50/80 hover:border-teal-400 shadow-2xs'
+                          : isConsented
+                          ? 'border-blue-200 bg-blue-50/20 hover:bg-blue-50/60'
+                          : 'border-gray-100 hover:border-brand-300 hover:bg-brand-50'
+                      }`}
+                    >
+                      <div
+                        className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 ${
+                          hasAppt
+                            ? 'bg-teal-600 text-white ring-2 ring-teal-300'
+                            : isConsented
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-brand-100 text-brand-700'
+                        }`}
+                      >
+                        {String(p.name || 'P')
+                          .split(' ')
+                          .map((w: string) => w[0])
+                          .join('')
+                          .slice(0, 2)
+                          .toUpperCase()}
                       </div>
-                      <div className="font-mono text-[10px] text-gray-400">{p.healthId || p.id}</div>
-                    </div>
-                    <Icon name="chevron_right" size={15} className="text-gray-300" />
-                  </button>
-                ))
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-sm text-gray-900 truncate">{p.name}</span>
+                          {hasAppt && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-100 text-teal-800 text-[10px] font-black border border-teal-200">
+                              ⚡ Token #{String(p.appointment.tokenNumber).padStart(2, '0')} · {p.appointment.timeSlot?.split(' - ')[0] || p.appointment.timeSlot}
+                            </span>
+                          )}
+                          {hasAppt && p.appointment.priority === 'HIGH_RISK' && (
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-red-100 text-red-700">
+                              HIGH RISK
+                            </span>
+                          )}
+                          {!hasAppt && isConsented && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-semibold border border-blue-200">
+                              <Icon name="shield" size={10} />
+                              Active Consent
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {p.age || '--'} yrs · {p.village || p.address || 'N/A'} · {p.gender || 'N/A'}
+                        </div>
+                        <div className="font-mono text-[10px] text-gray-400">{p.healthId || p.id}</div>
+                      </div>
+                      <Icon
+                        name="chevron_right"
+                        size={16}
+                        className={hasAppt ? 'text-teal-600 font-bold' : 'text-gray-300'}
+                      />
+                    </button>
+                  );
+                })
               )}
             </div>
           </div>
@@ -618,6 +1394,9 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
               </div>
             </div>
 
+            {/* Multilingual Voice-to-Text Triage Assistant */}
+            {renderVoiceAssistantCard()}
+
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-medium text-gray-600 block mb-1.5">
@@ -638,6 +1417,9 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
               <div>
                 <label className="text-xs font-medium text-gray-600 block mb-1.5">
                   Blood Pressure (mmHg)
+                  {parsedVoiceData?.qualitativeFindings?.some((f) => f.toLowerCase().includes('blood pressure') || f.toLowerCase().includes('bp')) && !vitals.bp && (
+                    <span className="ml-2 text-amber-600 font-semibold text-[11px]">⚠ Voice noted High BP (enter measured reading)</span>
+                  )}
                 </label>
                 <input
                   type="text"
@@ -720,6 +1502,9 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
                 {selectedSymptoms.length} Selected
               </span>
             </div>
+
+            {/* Multilingual Voice-to-Text Triage Assistant */}
+            {renderVoiceAssistantCard()}
 
             {/* Standardized Autocomplete Search Bar */}
             <div className="relative">
@@ -881,8 +1666,8 @@ export default function HealthAssessment({ navigate, patientId }: Props) {
               <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
                 Frequently Selected Symptoms
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-44 overflow-y-auto">
-                {symptomCatalog.slice(0, 18).map((s) => {
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-56 overflow-y-auto">
+                {symptomCatalog.map((s) => {
                   const isSelected = selectedSymptoms.includes(s.name);
                   return (
                     <button

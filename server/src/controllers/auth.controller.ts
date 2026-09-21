@@ -151,6 +151,18 @@ export async function register(
       );
     }
 
+    if (body.phone) {
+      const existingPhone = await prisma.user.findFirst({
+        where: { phone: body.phone.trim() },
+      });
+      if (existingPhone) {
+        throw new AppError(
+          `Phone number ${body.phone} is already registered. Please log in instead.`,
+          400
+        );
+      }
+    }
+
     const passwordHash =
       await bcrypt.hash(password, 10);
 
@@ -266,6 +278,31 @@ export async function register(
           .join(', ') ||
         'RuralCare Patient Address';
 
+      let resolvedAbhaAddress: string | null = body.abhaAddress?.trim() || null;
+      let resolvedAbhaNumber: string | null = body.abhaNumber?.trim() || null;
+
+      if (resolvedAbhaAddress) {
+        const existingAbha = await prisma.patient.findFirst({
+          where: { abhaAddress: resolvedAbhaAddress },
+        });
+        if (existingAbha) {
+          const parts = resolvedAbhaAddress.split('@');
+          const handle = parts[0];
+          const domain = parts[1] || 'abdm';
+          const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+          resolvedAbhaAddress = `${handle}.${randomSuffix}@${domain}`;
+        }
+      }
+
+      if (resolvedAbhaNumber) {
+        const existingNum = await prisma.patient.findFirst({
+          where: { abhaNumber: resolvedAbhaNumber },
+        });
+        if (existingNum) {
+          resolvedAbhaNumber = `91-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
+        }
+      }
+
       roleData = {
         patientProfile: {
           create: {
@@ -342,12 +379,10 @@ export async function register(
               null,
 
             abhaAddress:
-              body.abhaAddress ||
-              null,
+              resolvedAbhaAddress,
 
             abhaNumber:
-              body.abhaNumber ||
-              null,
+              resolvedAbhaNumber,
           },
         },
       };
@@ -433,7 +468,12 @@ export async function register(
     });
   }
 
-  catch (err) {
+  catch (err: any) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      const target = Array.isArray(err.meta?.target) ? err.meta?.target.join(', ') : 'field';
+      next(new AppError(`An account with this ${target} already exists. Please choose a different value or log in.`, 400));
+      return;
+    }
     next(err);
   }
 }

@@ -311,18 +311,16 @@ export async function getDoctorDashboard(req: Request, res: Response, next: Next
     const referralWhere: any =
       activeDoctorId || activeFacilityId
         ? {
-            status: { in: ['PENDING', 'ACCEPTED', 'IN_CONSULTATION'] },
             OR: [
               ...(activeDoctorId ? [{ toDoctorId: activeDoctorId }] : []),
               ...(activeFacilityId ? [{ toFacilityId: activeFacilityId }] : []),
             ],
           }
-        : { id: 'NO_MATCH' };
+        : undefined;
 
     // Build Doctor matching consent filters
     const doctorDisplayName = doctorRecord?.name || user?.fullName || '';
     const cleanDocName = doctorDisplayName.replace(/^Dr\.?\s*/i, '').trim();
-    const nowIso = new Date().toISOString();
 
     const consentDoctorFilters: any[] = [
       ...(doctorDisplayName ? [{ grantedTo: { contains: doctorDisplayName, mode: 'insensitive' as const } }] : []),
@@ -335,13 +333,8 @@ export async function getDoctorDashboard(req: Request, res: Response, next: Next
       ? {
           consentEntries: {
             some: {
-              status: 'GRANTED',
+              status: { in: ['GRANTED', 'TEMPORARY'] },
               OR: consentDoctorFilters,
-              AND: [
-                {
-                  OR: [{ expiresAt: null }, { expiresAt: { gt: nowIso } }],
-                },
-              ],
             },
           },
         }
@@ -351,18 +344,43 @@ export async function getDoctorDashboard(req: Request, res: Response, next: Next
     if (activeDoctorId) {
       patientOrConditions.push({ familyDoctorId: activeDoctorId });
       patientOrConditions.push({ referrals: { some: { toDoctorId: activeDoctorId } } });
+      patientOrConditions.push({ consultations: { some: { doctorId: activeDoctorId } } });
+      patientOrConditions.push({ appointments: { some: { doctorId: activeDoctorId } } });
+    }
+    if (activeFacilityId) {
+      patientOrConditions.push({ referrals: { some: { toFacilityId: activeFacilityId } } });
+      patientOrConditions.push({ appointments: { some: { facilityId: activeFacilityId } } });
+    }
+    if (cleanDocName) {
+      patientOrConditions.push({
+        consultations: {
+          some: {
+            doctorName: { contains: cleanDocName, mode: 'insensitive' as const },
+          },
+        },
+      });
     }
     if (activeConsentCondition) {
       patientOrConditions.push(activeConsentCondition);
     }
-
-    const patientWhere: any = patientOrConditions.length > 0
+    const patientWhere: any = (activeDoctorId || activeFacilityId) && patientOrConditions.length > 0
       ? { OR: patientOrConditions }
-      : { id: 'NO_MATCH' };
+      : undefined;
 
-    const consultationWhere: any = patientOrConditions.length > 0
-      ? { patient: { OR: patientOrConditions } }
-      : { id: 'NO_MATCH' };
+    const consultOrConditions: any[] = [];
+    if (activeDoctorId) {
+      consultOrConditions.push({ doctorId: activeDoctorId });
+    }
+    if (cleanDocName) {
+      consultOrConditions.push({ doctorName: { contains: cleanDocName, mode: 'insensitive' as const } });
+    }
+    if (patientOrConditions.length > 0) {
+      consultOrConditions.push({ patient: { OR: patientOrConditions } });
+    }
+
+    const consultationWhere: any = (activeDoctorId || activeFacilityId) && consultOrConditions.length > 0
+      ? { OR: consultOrConditions }
+      : undefined;
 
     // ── 3. Parallel scoped queries ──────────────────────────────────────────
     const [patients, referrals, sosAlerts, doctors, recentConsultations, followUpsList] =
@@ -370,7 +388,10 @@ export async function getDoctorDashboard(req: Request, res: Response, next: Next
         prisma.patient.findMany({
           where: patientWhere,
           orderBy: { createdAt: 'desc' },
-          take: 20,
+          take: 50,
+          include: {
+            healthWorker: true,
+          },
         }),
         prisma.referral.findMany({
           where: referralWhere,
@@ -393,7 +414,7 @@ export async function getDoctorDashboard(req: Request, res: Response, next: Next
           take: 10,
         }),
         prisma.consultation.findMany({
-          where: { ...consultationWhere, followUpDate: { not: null } },
+          where: { ...(consultationWhere ? consultationWhere : {}), followUpDate: { not: null } },
           include: { patient: true },
           orderBy: { createdAt: 'desc' },
           take: 5,
@@ -517,13 +538,15 @@ export async function getPatientDashboard(req: Request, res: Response, next: Nex
 
     // Prescribed medicines query from dispensary inventory
     const prescribedNames = patient.currentMedications || [];
-    const medicines = await prisma.medicine.findMany({
-      where: {
-        OR: prescribedNames.map(name => ({
-          name: { contains: name.split(' ')[0], mode: 'insensitive' },
-        })),
-      },
-    });
+    const medicines = prescribedNames.length > 0
+      ? await prisma.medicine.findMany({
+          where: {
+            OR: prescribedNames.map(name => ({
+              name: { contains: name.split(' ')[0], mode: 'insensitive' },
+            })),
+          },
+        })
+      : [];
 
     // Structured lab reports only for demo patients; clean empty array for new patients
     const labReports = patient.isDemo ? [
