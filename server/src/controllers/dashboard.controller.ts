@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { AppError } from '../middleware/error.js';
+import { DEMO_MCH_RECORDS } from './mch.controller.js';
 
 /**
  * Admin Dashboard Aggregated Metrics.
@@ -180,6 +181,66 @@ export async function getWorkerDashboard(_req: Request, res: Response, next: Nex
       riskLevel: (r.riskLevel || 'LOW').toLowerCase(),
     }));
 
+    // Extract MCH alerts & due list for worker
+    let mchRecords: any[] = [];
+    try {
+      mchRecords = await (prisma as any).mchRecord.findMany({
+        include: { patient: true },
+        orderBy: { updatedAt: 'desc' },
+      });
+    } catch {
+      mchRecords = [];
+    }
+
+    const effectiveMch = mchRecords.length > 0
+      ? mchRecords.map(r => ({
+          ...r,
+          patientName: r.patient?.name || r.childName || 'MCH Beneficiary',
+          patientHealthId: r.patient?.healthId || 'RHC-2026',
+          patientPhone: r.patient?.phone || '',
+          patientVillage: r.assignedVillage || r.patient?.village || 'Govindpur',
+          milestones: Array.isArray(r.milestones) ? r.milestones : [],
+        }))
+      : DEMO_MCH_RECORDS;
+
+    const mchDueItems: any[] = [];
+    effectiveMch.forEach(record => {
+      const milestones = Array.isArray(record.milestones) ? record.milestones : [];
+      milestones.forEach((m: any) => {
+        if (m.status === 'due' || m.status === 'overdue') {
+          mchDueItems.push({
+            id: `${record.id}-${m.code}`,
+            recordId: record.id,
+            patientId: record.patientId,
+            patientName: record.patientName,
+            healthId: record.patientHealthId,
+            phone: record.patientPhone,
+            village: record.assignedVillage || record.patientVillage,
+            isHighRisk: record.isHighRisk,
+            hrpIndicators: record.hrpIndicators || [],
+            category: m.category,
+            milestoneCode: m.code,
+            milestoneName: m.name,
+            dueDate: m.dueDate,
+            status: m.status,
+            pregnancyStatus: record.pregnancyStatus,
+            gestationalWeeks: record.gestationalWeeks,
+            childName: record.childName,
+            childAge: record.childAgeWeeks ? `${record.childAgeWeeks} weeks` : undefined,
+            notes: m.notes,
+            recommendedWeekOrAge: m.recommendedWeekOrAge,
+          });
+        }
+      });
+    });
+
+    const mchAlerts = {
+      totalBeneficiaries: effectiveMch.length,
+      overdueCount: mchDueItems.filter(i => i.status === 'overdue').length,
+      dueThisWeekCount: mchDueItems.filter(i => i.status === 'due').length,
+      highRiskCount: effectiveMch.filter(r => r.isHighRisk).length,
+    };
+
     res.status(200).json({
       success: true,
       data: {
@@ -188,12 +249,17 @@ export async function getWorkerDashboard(_req: Request, res: Response, next: Nex
           registeredPatients: totalPatientsCount,
           pendingFollowUps: pendingFollowUpsCount,
           highRiskCount: highRiskCount,
+          mchOverdueCount: mchAlerts.overdueCount,
+          mchDueThisWeekCount: mchAlerts.dueThisWeekCount,
         },
         patients,
         highRiskPatients,
         referrals: mappedReferrals,
         pendingReferrals: mappedReferrals.filter(r => r.status === 'pending'),
         onDutyDoctors,
+        mchRecords: effectiveMch,
+        mchDueItems,
+        mchAlerts,
       },
     });
   } catch (err) {
@@ -245,18 +311,16 @@ export async function getDoctorDashboard(req: Request, res: Response, next: Next
     const referralWhere: any =
       activeDoctorId || activeFacilityId
         ? {
-            status: { in: ['PENDING', 'ACCEPTED', 'IN_CONSULTATION'] },
             OR: [
               ...(activeDoctorId ? [{ toDoctorId: activeDoctorId }] : []),
               ...(activeFacilityId ? [{ toFacilityId: activeFacilityId }] : []),
             ],
           }
-        : { id: 'NO_MATCH' };
+        : undefined;
 
     // Build Doctor matching consent filters
     const doctorDisplayName = doctorRecord?.name || user?.fullName || '';
     const cleanDocName = doctorDisplayName.replace(/^Dr\.?\s*/i, '').trim();
-    const nowIso = new Date().toISOString();
 
     const consentDoctorFilters: any[] = [
       ...(doctorDisplayName ? [{ grantedTo: { contains: doctorDisplayName, mode: 'insensitive' as const } }] : []),
@@ -269,13 +333,8 @@ export async function getDoctorDashboard(req: Request, res: Response, next: Next
       ? {
           consentEntries: {
             some: {
-              status: 'GRANTED',
+              status: { in: ['GRANTED', 'TEMPORARY'] },
               OR: consentDoctorFilters,
-              AND: [
-                {
-                  OR: [{ expiresAt: null }, { expiresAt: { gt: nowIso } }],
-                },
-              ],
             },
           },
         }
@@ -285,23 +344,49 @@ export async function getDoctorDashboard(req: Request, res: Response, next: Next
     if (activeDoctorId) {
       patientOrConditions.push({ familyDoctorId: activeDoctorId });
       patientOrConditions.push({ referrals: { some: { toDoctorId: activeDoctorId } } });
+      patientOrConditions.push({ consultations: { some: { doctorId: activeDoctorId } } });
+      patientOrConditions.push({ appointments: { some: { doctorId: activeDoctorId } } });
+    }
+    if (activeFacilityId) {
+      patientOrConditions.push({ referrals: { some: { toFacilityId: activeFacilityId } } });
+      patientOrConditions.push({ appointments: { some: { facilityId: activeFacilityId } } });
+    }
+    if (cleanDocName) {
+      patientOrConditions.push({
+        consultations: {
+          some: {
+            doctorName: { contains: cleanDocName, mode: 'insensitive' as const },
+          },
+        },
+      });
     }
     if (activeConsentCondition) {
       patientOrConditions.push(activeConsentCondition);
     }
-
-    const patientWhere: any = patientOrConditions.length > 0
+    const patientWhere: any = (activeDoctorId || activeFacilityId) && patientOrConditions.length > 0
       ? { OR: patientOrConditions }
-      : { id: 'NO_MATCH' };
+      : undefined;
 
-    const consultationWhere: any = patientOrConditions.length > 0
-      ? { patient: { OR: patientOrConditions } }
-      : { id: 'NO_MATCH' };
+    const consultOrConditions: any[] = [];
+    if (activeDoctorId) {
+      consultOrConditions.push({ doctorId: activeDoctorId });
+    }
+    if (cleanDocName) {
+      consultOrConditions.push({ doctorName: { contains: cleanDocName, mode: 'insensitive' as const } });
+    }
+    if (patientOrConditions.length > 0) {
+      consultOrConditions.push({ patient: { OR: patientOrConditions } });
+    }
+
+    const consultationWhere: any = (activeDoctorId || activeFacilityId) && consultOrConditions.length > 0
+      ? { OR: consultOrConditions }
+      : undefined;
 
     // ── 3. Parallel scoped queries ──────────────────────────────────────────
     const [patients, referrals, sosAlerts, doctors, recentConsultations, followUpsList] =
       await Promise.all([
         prisma.patient.findMany({
+          where: patientWhere,
           orderBy: { createdAt: 'desc' },
           take: 50,
           include: {
@@ -329,7 +414,7 @@ export async function getDoctorDashboard(req: Request, res: Response, next: Next
           take: 10,
         }),
         prisma.consultation.findMany({
-          where: { ...consultationWhere, followUpDate: { not: null } },
+          where: { ...(consultationWhere ? consultationWhere : {}), followUpDate: { not: null } },
           include: { patient: true },
           orderBy: { createdAt: 'desc' },
           take: 5,
@@ -453,13 +538,15 @@ export async function getPatientDashboard(req: Request, res: Response, next: Nex
 
     // Prescribed medicines query from dispensary inventory
     const prescribedNames = patient.currentMedications || [];
-    const medicines = await prisma.medicine.findMany({
-      where: {
-        OR: prescribedNames.map(name => ({
-          name: { contains: name.split(' ')[0], mode: 'insensitive' },
-        })),
-      },
-    });
+    const medicines = prescribedNames.length > 0
+      ? await prisma.medicine.findMany({
+          where: {
+            OR: prescribedNames.map(name => ({
+              name: { contains: name.split(' ')[0], mode: 'insensitive' },
+            })),
+          },
+        })
+      : [];
 
     // Structured lab reports only for demo patients; clean empty array for new patients
     const labReports = patient.isDemo ? [
@@ -488,6 +575,27 @@ export async function getPatientDashboard(req: Request, res: Response, next: Nex
           dosage: 'As advised by doctor',
         }));
 
+    // Find linked MCH Record for digital MCP Card
+    let mchRecord: any = null;
+    try {
+      mchRecord = await (prisma as any).mchRecord.findFirst({
+        where: {
+          OR: [
+            { patientId: patient.id },
+            { patientId: patient.healthId },
+          ],
+        },
+      });
+    } catch {
+      mchRecord = null;
+    }
+
+    if (!mchRecord) {
+      mchRecord = DEMO_MCH_RECORDS.find(
+        r => r.patientId === patient.id || r.patientHealthId === patient.healthId || r.patientName.toLowerCase() === patient.name.toLowerCase()
+      ) || (patient.gender === 'F' ? DEMO_MCH_RECORDS[0] : null);
+    }
+
     res.status(200).json({
       success: true,
       data: {
@@ -497,6 +605,7 @@ export async function getPatientDashboard(req: Request, res: Response, next: Nex
         consents: patient.consentEntries,
         medicines: formattedMedicines,
         labReports,
+        mchRecord,
       },
     });
   } catch (err) {

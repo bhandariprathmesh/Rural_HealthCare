@@ -82,6 +82,13 @@ enum SosStatus {
   ESCALATED
 }
 
+enum DiagnosticStatus {
+  AVAILABLE
+  LOW_STOCK
+  OUT_OF_STOCK
+  EXPIRED
+}
+
 model User {
   id           String    @id @default(uuid())
   email        String?   @unique
@@ -123,6 +130,7 @@ model Facility {
   emergencyLogs       EmergencyAccessLog[]
   consentArtifacts    ConsentArtifact[]
   medicines           Medicine[]
+  diagnosticItems     DiagnosticItem[]
   sosAlerts           SosAlert[]
   appointments        Appointment[]
 }
@@ -219,6 +227,7 @@ model Patient {
   emergencyAccessLogs EmergencyAccessLog[]
   sosAlerts           SosAlert[]
   aiAssessments       AIAssessment[]
+  mchRecords          MchRecord[]
   appointments        Appointment[]
 }
 
@@ -487,6 +496,25 @@ model Medicine {
   updatedAt     DateTime  @updatedAt
 }
 
+model DiagnosticItem {
+  id            String           @id @default(uuid())
+  code          String           @unique
+  testName      String
+  testNameHi    String?
+  category      String           @default("Rapid Diagnostic")
+  kitsAvailable Int              @default(0)
+  minKitsLevel  Int              @default(10)
+  status        DiagnosticStatus @default(AVAILABLE)
+  batch         String?
+  expiryDate    String?
+  facilityId    String
+  facility      Facility         @relation(fields: [facilityId], references: [id], onDelete: Cascade)
+  facilityName  String?
+  isDemo        Boolean          @default(true)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+}
+
 model SyncRecord {
   id          String     @id @default(uuid())
   syncCode    String     @unique
@@ -605,3 +633,35 @@ model MockABHAProfile {
   updatedAt       DateTime @updatedAt
 }
 
+enum PregnancyStatus {
+  PREGNANT
+  POSTPARTUM
+  DELIVERED
+  NOT_PREGNANT
+}
+
+model MchRecord {
+  id                 String          @id @default(uuid())
+  patientId          String
+  pregnancyStatus    PregnancyStatus @default(PREGNANT)
+  edd                String?
+  lmp                String?
+  gestationalWeeks   Int?            @default(12)
+  isHighRisk         Boolean         @default(false)
+  hrpIndicators      String[]
+  gravida            Int?            @default(1)
+  para               Int?            @default(0)
+  milestones         Json
+  childName          String?
+  childDob           String?
+  childGender        String?
+  childAgeWeeks      Int?
+  nextScheduledDate  String?
+  assignedVillage    String?
+  assignedWorkerId   String?
+  notes              String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  patient            Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
+}

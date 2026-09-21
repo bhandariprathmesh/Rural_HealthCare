@@ -23,7 +23,9 @@ import OfflineMode from './screens/OfflineMode';
 import SyncCenter from './screens/SyncCenter';
 import PatientMobileDashboard from './screens/PatientMobileDashboard';
 import AdminDashboard from './screens/AdminDashboard';
+import PhcStockCheckerModal from './components/PhcStockCheckerModal';
 import TeleconsultationRoom from './screens/TeleconsultationRoom';
+import McpCardScreen from './screens/McpCardScreen';
 
 interface NavItem {
   id: string;
@@ -112,6 +114,11 @@ const NAV: Record<Role, NavItem[]> = {
       icon: 'share',
     },
     {
+      id: 'phc-stock',
+      label: 'PHC Stock',
+      icon: 'pill',
+    },
+    {
       id: 'offline',
       label: 'Offline Mode',
       icon: 'wifi_off',
@@ -138,6 +145,11 @@ const NAV: Record<Role, NavItem[]> = {
       id: 'doctor-patient-view',
       label: 'Patient View',
       icon: 'user',
+    },
+    {
+      id: 'phc-stock',
+      label: 'PHC Stock',
+      icon: 'pill',
     },
     {
       id: 'health-assessment',
@@ -169,13 +181,23 @@ const NAV: Record<Role, NavItem[]> = {
   patient: [
     {
       id: 'patient-dashboard',
-      label: 'My Health',
-      icon: 'home',
+      label: 'Overview',
+      icon: 'dashboard',
+    },
+    {
+      id: 'patient-appointments',
+      label: 'OPD Appointments',
+      icon: 'calendar',
     },
     {
       id: 'teleconsultation',
-      label: 'Video Consultation',
+      label: 'Teleconsultation',
       icon: 'video',
+    },
+    {
+      id: 'patient-pharmacy',
+      label: 'Pharmacy & Stock',
+      icon: 'pill',
     },
     {
       id: 'patient-profile',
@@ -204,6 +226,11 @@ const NAV: Record<Role, NavItem[]> = {
       id: 'admin-dashboard',
       label: 'Dashboard',
       icon: 'chart',
+    },
+    {
+      id: 'phc-stock',
+      label: 'PHC Stock',
+      icon: 'pill',
     },
   ],
 };
@@ -371,6 +398,9 @@ export default function App() {
   const [pendingSync, setPendingSync] =
     useState(0);
 
+  const [navTrigger, setNavTrigger] =
+    useState(0);
+
   useEffect(() => {
     function updatePending() {
       syncEngine.getPendingCount().then(setPendingSync).catch(() => {});
@@ -525,6 +555,11 @@ export default function App() {
   }, [role, currentUser, screen]);
 
   useEffect(() => {
+    // Purge legacy development token in localStorage if no active sessionStorage session exists
+    if (typeof localStorage !== 'undefined' && typeof sessionStorage !== 'undefined' && !sessionStorage.getItem('rc_token')) {
+      localStorage.removeItem('rc_token');
+    }
+
     const token = getToken();
 
     if (!token) {
@@ -566,11 +601,26 @@ export default function App() {
       });
   }, []);
 
+  // Additional sub-screens permitted per role that are not in the primary navigation list
+  const EXTRA_ALLOWED_SCREENS: Record<Role, string[]> = {
+    login: ['login', 'register-patient'],
+    patient: ['mcp-card', 'patient-profile-edit', 'offline', 'sync'],
+    doctor: ['mcp-card', 'doctor-patient-view', 'offline', 'sync', 'doctor-sos-inbox', 'sos-inbox'],
+    worker: ['mcp-card', 'teleconsultation', 'offline', 'sync'],
+    admin: ['offline', 'sync'],
+  };
+
   // Enforce role-based navigation lock
   useEffect(() => {
     if (role !== 'login') {
       const allowedItems = NAV[role] || [];
-      const allowedScreenIds = allowedItems.map((item) => item.id);
+      const allowedScreenIds = [
+        ...allowedItems.map((item) => item.id),
+        ...(EXTRA_ALLOWED_SCREENS[role] || []),
+      ];
+      if (role === 'patient') {
+        allowedScreenIds.push('teleconsultation', 'phc-stock', 'patient-appointments', 'patient-teleconsult', 'patient-pharmacy');
+      }
       if (!allowedScreenIds.includes(screen)) {
         setScreen(DEFAULT_SCREEN[role]);
       }
@@ -761,6 +811,7 @@ export default function App() {
     patientId?: string,
     roomId?: string
   ) {
+    setNavTrigger((prev) => prev + 1);
     if (nextScreen === 'patient-profile-edit') {
       setAutoOpenEditProfile(true);
       setScreen('patient-profile');
@@ -1298,8 +1349,7 @@ export default function App() {
             />
           )}
 
-          {screen ===
-            'teleconsultation' && (
+          {(screen === 'teleconsultation' || screen === 'patient-teleconsult') && (
             <TeleconsultationRoom
               navigate={
                 navigate
@@ -1308,7 +1358,10 @@ export default function App() {
                 currentUser
               }
               patientId={
-                selectedPatientId || undefined
+                selectedPatientId ||
+                currentUser?.patientProfile?.healthId ||
+                currentUser?.id ||
+                undefined
               }
               roomId={
                 teleconsultRoomId || undefined
@@ -1316,12 +1369,28 @@ export default function App() {
             />
           )}
 
-          {screen ===
-            'patient-dashboard' && (
+          {(screen === 'patient-dashboard' ||
+            screen === 'patient-appointments' ||
+            screen === 'patient-pharmacy') && (
             <PatientMobileDashboard
               navigate={
                 navigate
               }
+              initialTab={
+                screen === 'patient-appointments'
+                  ? 'appointments'
+                  : screen === 'patient-pharmacy'
+                  ? 'pharmacy'
+                  : 'overview'
+              }
+              initialModal={
+                screen === 'patient-appointments'
+                  ? 'book'
+                  : screen === 'patient-pharmacy'
+                  ? 'stock'
+                  : null
+              }
+              navTrigger={navTrigger}
               onSOS={() =>
                 fireSOS(
                   `${roleInfo.user} (Patient)`,
@@ -1338,6 +1407,16 @@ export default function App() {
                 currentUser?.phone ||
                 ''
               }
+              currentUser={currentUser}
+            />
+          )}
+
+          {screen === 'mcp-card' && (
+            <McpCardScreen
+              navigate={navigate}
+              currentUser={currentUser}
+              loginPhone={currentUser?.phone || ''}
+              patientId={selectedPatientId || currentUser?.patientProfile?.healthId || currentUser?.patientProfile?.id || undefined}
             />
           )}
 
@@ -1437,6 +1516,39 @@ export default function App() {
               }
             />
           )}
+          {screen === 'phc-stock' && (
+            <div className="p-4 sm:p-8 max-w-5xl mx-auto min-h-full">
+              <PhcStockCheckerModal
+                isOpen={true}
+                onClose={() => {
+                  const fallback =
+                    role === 'doctor'
+                      ? 'doctor-dashboard'
+                      : role === 'worker'
+                      ? 'worker-dashboard'
+                      : role === 'admin'
+                      ? 'admin-dashboard'
+                      : 'patient-dashboard';
+                  navigate(fallback);
+                }}
+                defaultFacilityId={
+                  currentUser?.doctorProfile?.facility?.id ||
+                  (currentUser?.workerProfile?.assignedPhc?.toLowerCase().includes('lunkaransar')
+                    ? 'HFR-2024-00891'
+                    : 'HFR-2024-SANJIVANI')
+                }
+                defaultFacilityName={
+                  currentUser?.doctorProfile?.facility?.name ||
+                  currentUser?.workerProfile?.assignedPhc ||
+                  'Sanjivani PHC'
+                }
+                userRole={
+                  role === 'doctor' ? 'doctor' : role === 'admin' ? 'admin' : role === 'patient' ? 'patient' : 'worker'
+                }
+              />
+            </div>
+          )}
+
           </ErrorBoundary>
         </main>
       </div>

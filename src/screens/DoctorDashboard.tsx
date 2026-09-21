@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react";
 
 import {
   StatCard,
@@ -11,7 +11,7 @@ import {
   HPRBadge,
   HFRBadge,
   ABDMLayerLegend,
-} from "../components/shared"
+} from "../components/shared";
 
 import {
   getDoctorDashboardData,
@@ -20,7 +20,8 @@ import {
   getDoctorAppointments,
   updateAppointmentStatus,
   updateDoctorSlotCapacity,
-} from "../api/client"
+} from "../api/client";
+import PhcStockCheckerModal from "../components/PhcStockCheckerModal";
 
 interface SOSAlert {
   id: string
@@ -66,7 +67,6 @@ const STATUS_OPTIONS: {
     text: "text-green-800",
     border: "border-green-300",
   },
-
   {
     value: "busy",
     label: "Busy",
@@ -85,7 +85,7 @@ const STATUS_OPTIONS: {
     text: "text-gray-700",
     border: "border-gray-300",
   },
-]
+];
 
 export default function DoctorDashboard({
   navigate,
@@ -94,19 +94,20 @@ export default function DoctorDashboard({
   onAcknowledgeSOS,
   onDeclineSOS,
 }: Props) {
-  const [patients, setPatients] = useState<any[]>([])
-  const [referrals, setReferrals] = useState<any[]>([])
-  const [consultations, setConsultations] = useState<any[]>([])
-  const [followUps, setFollowUps] = useState<any[]>([])
-  const [doctorId, setDoctorId] = useState<string>("")
-  const [search, setSearch] = useState("")
-  const [quickLookupId, setQuickLookupId] = useState("")
-  const [myStatus, setMyStatus] = useState<DutyStatus>("available")
-  const [statusPickerOpen, setStatusPickerOpen] = useState(false)
-  const [isLive, setIsLive] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [dbUser, setDbUser] = useState<any>(null)
-  const [patientCallStatus, setPatientCallStatus] = useState<Record<string, 'available' | 'ringing' | 'active' | 'missed' | 'offline'>>({})
+  const [patients, setPatients] = useState<any[]>([]);
+  const [referrals, setReferrals] = useState<any[]>([]);
+  const [consultations, setConsultations] = useState<any[]>([]);
+  const [followUps, setFollowUps] = useState<any[]>([]);
+  const [doctorId, setDoctorId] = useState<string>("");
+  const [search, setSearch] = useState("");
+  const [quickLookupId, setQuickLookupId] = useState("");
+  const [myStatus, setMyStatus] = useState<DutyStatus>("available");
+  const [statusPickerOpen, setStatusPickerOpen] = useState(false);
+  const [isLive, setIsLive] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [dbUser, setDbUser] = useState<any>(null);
+  const [stockModalOpen, setStockModalOpen] = useState(false);
+  const [patientCallStatus, setPatientCallStatus] = useState<Record<string, 'available' | 'ringing' | 'active' | 'missed' | 'offline'>>({});
 
   const [dashboardStats, setDashboardStats] = useState<any>(null)
 
@@ -548,8 +549,15 @@ export default function DoctorDashboard({
             />
           </div>
         </div>
-
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setStockModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+          >
+            <Icon name="pill" size={13} className="text-emerald-700" />
+            PHC Stock
+          </button>
           <button
             onClick={() => navigate("doctor-sos-inbox")}
             className="flex items-center gap-1.5 px-3 py-2 bg-red-100 hover:bg-red-200 text-red-800 border border-red-300 rounded-xl text-xs font-bold transition-colors cursor-pointer"
@@ -1701,6 +1709,13 @@ export default function DoctorDashboard({
           </Card>
         </div>
       </div>
+
+      <PhcStockCheckerModal
+        isOpen={stockModalOpen}
+        onClose={() => setStockModalOpen(false)}
+        defaultFacilityName={doctorProfile?.facility?.name || 'Sanjivani PHC'}
+        userRole="doctor"
+      />
 
       {/* OPD Slot Capacity Modal */}
       {showCapacityModal && (
