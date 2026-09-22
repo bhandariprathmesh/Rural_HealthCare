@@ -45,8 +45,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
-    <!-- Emergency SOS Tier 2: Silent SMS Fallback -->
-    <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- Emergency SOS Tier 2: SMS Fallback via Android SMS Intent (No restricted permission required) -->
 
     <!-- Emergency SOS Tier 3: Bluetooth LE Peer Relay (Android 12+) -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
