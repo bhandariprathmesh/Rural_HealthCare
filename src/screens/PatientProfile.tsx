@@ -29,6 +29,7 @@ interface Props {
   patientId?: string | null;
   currentUser?: any;
   autoOpenEdit?: boolean;
+  lang?: 'en' | 'hi';
 }
 
 const PROFILE_TABS = [
@@ -47,6 +48,7 @@ export default function PatientProfile({
   patientId,
   currentUser: propUser,
   autoOpenEdit = false,
+  lang = 'en',
 }: Props) {
   const [activeTab, setActiveTab] = useState('overview');
   const [patient, setPatient] = useState<any>(null);

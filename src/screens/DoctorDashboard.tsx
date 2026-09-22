@@ -47,6 +47,7 @@ interface Props {
   onAcknowledgeSOS?: (id: string) => void
   onDeclineSOS?: (id: string) => void
   currentUser?: any
+  lang?: 'en' | 'hi'
 }
 
 type DutyStatus = "available" | "busy" | "offline"
@@ -96,6 +97,7 @@ export default function DoctorDashboard({
   onAcknowledgeSOS,
   onDeclineSOS,
   currentUser,
+  lang = 'en',
 }: Props) {
   const [patients, setPatients] = useState<any[]>([]);
   const [referrals, setReferrals] = useState<any[]>([]);

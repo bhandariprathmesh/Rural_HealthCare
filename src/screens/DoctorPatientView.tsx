@@ -26,6 +26,7 @@ interface Props {
   navigate: (s: string, patientId?: string) => void;
   patientId?: string | null;
   currentUser?: any;
+  lang?: 'en' | 'hi';
 }
 
 const TABS = [
@@ -33,10 +34,10 @@ const TABS = [
   { id: 'vitals', label: 'Vitals & Symptoms' },
   { id: 'history', label: 'Medical History' },
   { id: 'ai', label: 'AI Assessment' },
-  { id: 'actions', label: 'Actions' },
+  { id: 'referral', label: 'Referrals' },
 ];
 
-export default function DoctorPatientView({ navigate, patientId, currentUser }: Props) {
+export default function DoctorPatientView({ navigate, patientId, currentUser, lang = 'en' }: Props) {
   const [activeTab, setActiveTab] = useState('overview');
   const [addingDiagnosis, setAddingDiagnosis] = useState(false);
   const [diagnosis, setDiagnosis] = useState('');

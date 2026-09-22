@@ -13,6 +13,7 @@ interface Props {
   currentUser?: any;
   patientId?: string;
   roomId?: string;
+  lang?: 'en' | 'hi';
 }
 
 interface PrescriptionItem {
@@ -173,6 +174,7 @@ export default function TeleconsultationRoom({
   currentUser: propUser,
   patientId,
   roomId,
+  lang = 'en',
 }: Props) {
   // Query parameters check: ?room=xxx&patientId=yyy&as=patient
   const queryParams = new URLSearchParams(window.location.search);
@@ -300,6 +302,11 @@ export default function TeleconsultationRoom({
     ? (currentUser?.patientProfile?.name || currentUser?.fullName || patient?.name || 'Patient')
     : (patient?.name || (selectedPatientId ? patientList.find(p => p.healthId === selectedPatientId || p.id === selectedPatientId)?.name : null) || 'Patient');
 
+  const doctorNameRef = useRef(doctorName);
+  doctorNameRef.current = doctorName;
+  const patientNameRef = useRef(patientName);
+  patientNameRef.current = patientName;
+
   // --------------------------------------------------------------------------
   // 1. Local Video Element Attachment (Guaranteed Callback Ref)
   // --------------------------------------------------------------------------
@@ -376,7 +383,7 @@ export default function TeleconsultationRoom({
       } catch (err2: any) {
         console.warn('Hardware camera unavailable, in use by another tab, or denied:', err2?.message);
         // Fallback: Generate real animated canvas stream so video tile is NEVER pitch black
-        const label = isDoctor ? doctorName : patientName;
+        const label = isDoctor ? doctorNameRef.current : patientNameRef.current;
         const role = isDoctor ? 'PHC Medical Officer' : 'Patient / ASHA Assisted';
         stream = createSimulatedMediaStream(label, role);
         setCameraStatus('fallback');
@@ -406,9 +413,9 @@ export default function TeleconsultationRoom({
         }
       });
     }
-  }, [isDoctor, doctorName, patientName]);
+  }, [isDoctor]);
 
-  // Initialize camera once on mount
+  // Initialize camera once on mount, keep alive throughout entire call
   useEffect(() => {
     initLocalCamera();
     return () => {
@@ -632,7 +639,7 @@ export default function TeleconsultationRoom({
           sessionId,
           role: isDoctor ? 'doctor' : 'patient',
           userId: currentUser?.id || (isDoctor ? 'doc-user' : 'patient-user'),
-          userName: isDoctor ? doctorName : patientName,
+          userName: isDoctor ? doctorNameRef.current : patientNameRef.current,
           patientId: targetPId,
           facilityName: currentUser?.doctorProfile?.facility?.name || 'PHC Lunkaransar Tele-Clinic',
           isLowBandwidth: lowBandwidthMode,
@@ -824,7 +831,7 @@ export default function TeleconsultationRoom({
         wsRef.current.close();
       }
     };
-  }, [sessionId, callActive, isDoctor, doctorName, patientName]);
+  }, [sessionId, callActive, isDoctor]);
 
   // Handle local microphone mute / unmute
   useEffect(() => {

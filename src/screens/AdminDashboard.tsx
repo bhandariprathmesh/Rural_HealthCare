@@ -6,9 +6,11 @@ import { getAdminDashboardData } from '../api/client';
 interface Props {
   navigate: (s: string) => void;
   isOffline: boolean;
+  currentUser?: any;
+  lang?: 'en' | 'hi';
 }
 
-export default function AdminDashboard({ navigate, isOffline }: Props) {
+export default function AdminDashboard({ navigate, isOffline, currentUser, lang = 'en' }: Props) {
   const [dbUser, setDbUser] = useState<any>(null);
 
   const [stats, setStats] = useState(ADMIN_STATS);

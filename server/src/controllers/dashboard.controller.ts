@@ -185,6 +185,18 @@ export async function getAdminDashboard(_req: Request, res: Response, next: Next
  */
 export async function getWorkerDashboard(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    const cacheKey = 'worker_dashboard';
+    const cached = dashboardCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && cached.expiresAt > now) {
+      res.status(200).json({
+        success: true,
+        data: cached.data,
+        cached: true,
+      });
+      return;
+    }
+
     const [
       patients,
       referrals,
@@ -300,26 +312,33 @@ export async function getWorkerDashboard(_req: Request, res: Response, next: Nex
       highRiskCount: effectiveMch.filter(r => r.isHighRisk).length,
     };
 
+    const workerDashboardData = {
+      stats: {
+        todayConsultations: consultationsCount,
+        registeredPatients: totalPatientsCount,
+        pendingFollowUps: pendingFollowUpsCount,
+        highRiskCount: highRiskCount,
+        mchOverdueCount: mchAlerts.overdueCount,
+        mchDueThisWeekCount: mchAlerts.dueThisWeekCount,
+      },
+      patients,
+      highRiskPatients,
+      referrals: mappedReferrals,
+      pendingReferrals: mappedReferrals.filter(r => r.status === 'pending'),
+      onDutyDoctors,
+      mchRecords: effectiveMch,
+      mchDueItems,
+      mchAlerts,
+    };
+
+    dashboardCache.set(cacheKey, {
+      data: workerDashboardData,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+    });
+
     res.status(200).json({
       success: true,
-      data: {
-        stats: {
-          todayConsultations: consultationsCount,
-          registeredPatients: totalPatientsCount,
-          pendingFollowUps: pendingFollowUpsCount,
-          highRiskCount: highRiskCount,
-          mchOverdueCount: mchAlerts.overdueCount,
-          mchDueThisWeekCount: mchAlerts.dueThisWeekCount,
-        },
-        patients,
-        highRiskPatients,
-        referrals: mappedReferrals,
-        pendingReferrals: mappedReferrals.filter(r => r.status === 'pending'),
-        onDutyDoctors,
-        mchRecords: effectiveMch,
-        mchDueItems,
-        mchAlerts,
-      },
+      data: workerDashboardData,
     });
   } catch (err) {
     next(err);
@@ -603,6 +622,17 @@ export async function getPatientDashboard(req: Request, res: Response, next: Nex
   try {
     const rawId = req.params.healthId;
     const healthId = Array.isArray(rawId) ? rawId[0] : rawId;
+    const cacheKey = `patient_dashboard_${healthId}`;
+    const cached = dashboardCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && cached.expiresAt > now) {
+      res.status(200).json({
+        success: true,
+        data: cached.data,
+        cached: true,
+      });
+      return;
+    }
 
     const patient = await prisma.patient.findFirst({
       where: {
@@ -690,17 +720,24 @@ export async function getPatientDashboard(req: Request, res: Response, next: Nex
       ) || (patient.gender === 'F' ? DEMO_MCH_RECORDS[0] : null);
     }
 
+    const patientDashboardData = {
+      patient,
+      consultations: patient.consultations,
+      referrals: patient.referrals,
+      consents: patient.consentEntries,
+      medicines: formattedMedicines,
+      labReports,
+      mchRecord,
+    };
+
+    dashboardCache.set(cacheKey, {
+      data: patientDashboardData,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+    });
+
     res.status(200).json({
       success: true,
-      data: {
-        patient,
-        consultations: patient.consultations,
-        referrals: patient.referrals,
-        consents: patient.consentEntries,
-        medicines: formattedMedicines,
-        labReports,
-        mchRecord,
-      },
+      data: patientDashboardData,
     });
   } catch (err) {
     next(err);

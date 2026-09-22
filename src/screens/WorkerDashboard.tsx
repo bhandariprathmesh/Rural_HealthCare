@@ -55,6 +55,10 @@ interface Props {
   onSOS: () => void
 
   activeSosAlert?: ActiveSosAlert | null
+
+  currentUser?: any
+
+  lang?: 'en' | 'hi'
 }
 
 interface Doctor {
@@ -228,6 +232,10 @@ export default function WorkerDashboard({
   onSOS,
 
   activeSosAlert,
+
+  currentUser,
+
+  lang = 'en',
 }: Props) {
   const [patients, setPatients] = useState<any[]>([])
 

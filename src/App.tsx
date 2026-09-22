@@ -36,6 +36,7 @@ import McpCardScreen from './screens/McpCardScreen';
 interface NavItem {
   id: string;
   label: string;
+  labelHi?: string;
   icon: string;
 }
 
@@ -89,155 +90,44 @@ const NAV: Record<Role, NavItem[]> = {
   login: [],
 
   worker: [
-    {
-      id: 'worker-dashboard',
-      label: 'Dashboard',
-      icon: 'dashboard',
-    },
-    {
-      id: 'register-patient',
-      label: 'Register Patient',
-      icon: 'plus',
-    },
-    {
-      id: 'patient-profile',
-      label: 'Patient Profile',
-      icon: 'user',
-    },
-    {
-      id: 'health-assessment',
-      label: 'New Assessment',
-      icon: 'clipboard',
-    },
-    {
-      id: 'ai-risk',
-      label: 'AI Assessment',
-      icon: 'brain',
-    },
-    {
-      id: 'referral',
-      label: 'Referrals',
-      icon: 'share',
-    },
-    {
-      id: 'phc-stock',
-      label: 'PHC Stock',
-      icon: 'pill',
-    },
-    {
-      id: 'offline',
-      label: 'Offline Mode',
-      icon: 'wifi_off',
-    },
-    {
-      id: 'sync',
-      label: 'Sync Center',
-      icon: 'sync',
-    },
+    { id: 'worker-dashboard', label: 'Dashboard', labelHi: 'डैशबोर्ड', icon: 'dashboard' },
+    { id: 'register-patient', label: 'Register Patient', labelHi: 'नया मरीज पंजीकरण', icon: 'plus' },
+    { id: 'patient-profile', label: 'Patient Profile', labelHi: 'मरीज प्रोफाइल', icon: 'user' },
+    { id: 'health-assessment', label: 'New Assessment', labelHi: 'स्वास्थ्य जांच', icon: 'clipboard' },
+    { id: 'ai-risk', label: 'AI Assessment', labelHi: 'एआई स्वास्थ्य विश्लेषण', icon: 'brain' },
+    { id: 'referral', label: 'Referrals', labelHi: 'रेफरल', icon: 'share' },
+    { id: 'phc-stock', label: 'PHC Stock', labelHi: 'दवा स्टॉक', icon: 'pill' },
+    { id: 'offline', label: 'Offline Mode', labelHi: 'ऑफलाइन मोड', icon: 'wifi_off' },
+    { id: 'sync', label: 'Sync Center', labelHi: 'सिंक केंद्र', icon: 'sync' },
   ],
 
   doctor: [
-    {
-      id: 'doctor-dashboard',
-      label: 'Dashboard',
-      icon: 'dashboard',
-    },
-    {
-      id: 'teleconsultation',
-      label: 'Teleconsultation',
-      icon: 'video',
-    },
-    {
-      id: 'doctor-patient-view',
-      label: 'Patient View',
-      icon: 'user',
-    },
-    {
-      id: 'phc-stock',
-      label: 'PHC Stock',
-      icon: 'pill',
-    },
-    {
-      id: 'health-assessment',
-      label: 'New Assessment',
-      icon: 'clipboard',
-    },
-    {
-      id: 'referral',
-      label: 'Referrals',
-      icon: 'share',
-    },
-    {
-      id: 'doctor-sos-inbox',
-      label: 'SOS Inbox',
-      icon: 'bell',
-    },
-    {
-      id: 'emergency-access',
-      label: 'Emergency Access',
-      icon: 'alert',
-    },
-    {
-      id: 'emergency-log',
-      label: 'Emergency Log',
-      icon: 'history',
-    },
+    { id: 'doctor-dashboard', label: 'Dashboard', labelHi: 'डैशबोर्ड', icon: 'dashboard' },
+    { id: 'teleconsultation', label: 'Teleconsultation', labelHi: 'वीडियो परामर्श', icon: 'video' },
+    { id: 'doctor-patient-view', label: 'Patient View', labelHi: 'मरीज सूची', icon: 'user' },
+    { id: 'phc-stock', label: 'PHC Stock', labelHi: 'दवा स्टॉक', icon: 'pill' },
+    { id: 'health-assessment', label: 'New Assessment', labelHi: 'स्वास्थ्य जांच', icon: 'clipboard' },
+    { id: 'referral', label: 'Referrals', labelHi: 'रेफरल', icon: 'share' },
+    { id: 'doctor-sos-inbox', label: 'SOS Inbox', labelHi: 'आपातकालीन इनबॉक्स', icon: 'bell' },
+    { id: 'emergency-access', label: 'Emergency Access', labelHi: 'आपातकालीन एक्सेस', icon: 'alert' },
+    { id: 'emergency-log', label: 'Emergency Log', labelHi: 'एक्सेस लॉग', icon: 'history' },
   ],
 
   patient: [
-    {
-      id: 'patient-dashboard',
-      label: 'Overview',
-      icon: 'dashboard',
-    },
-    {
-      id: 'patient-appointments',
-      label: 'OPD Appointments',
-      icon: 'calendar',
-    },
-    {
-      id: 'teleconsultation',
-      label: 'Teleconsultation',
-      icon: 'video',
-    },
-    {
-      id: 'patient-pharmacy',
-      label: 'Pharmacy & Stock',
-      icon: 'pill',
-    },
-    {
-      id: 'patient-profile',
-      label: 'My Account',
-      icon: 'user',
-    },
-    {
-      id: 'consent',
-      label: 'Consent & Privacy',
-      icon: 'shield',
-    },
-    {
-      id: 'access-request',
-      label: 'Access Request',
-      icon: 'lock',
-    },
-    {
-      id: 'access-history',
-      label: 'Access History',
-      icon: 'eye',
-    },
+    { id: 'patient-dashboard', label: 'Overview', labelHi: 'डैशबोर्ड', icon: 'dashboard' },
+    { id: 'patient-appointments', label: 'OPD Appointments', labelHi: 'ओपीडी अपॉइंटमेंट', icon: 'calendar' },
+    { id: 'teleconsultation', label: 'Teleconsultation', labelHi: 'वीडियो परामर्श', icon: 'video' },
+    { id: 'patient-pharmacy', label: 'Pharmacy & Stock', labelHi: 'दवाइयां और स्टॉक', icon: 'pill' },
+    { id: 'patient-profile', label: 'My Account', labelHi: 'मेरा खाता', icon: 'user' },
+    { id: 'consent', label: 'Consent & Privacy', labelHi: 'सहमति एवं गोपनीयता', icon: 'shield' },
+    { id: 'access-request', label: 'Access Request', labelHi: 'एक्सेस अनुरोध', icon: 'lock' },
+    { id: 'access-history', label: 'Access History', labelHi: 'एक्सेस इतिहास', icon: 'eye' },
   ],
 
   admin: [
-    {
-      id: 'admin-dashboard',
-      label: 'Dashboard',
-      icon: 'chart',
-    },
-    {
-      id: 'phc-stock',
-      label: 'PHC Stock',
-      icon: 'pill',
-    },
+    { id: 'admin-dashboard', label: 'Dashboard', labelHi: 'डैशबोर्ड', icon: 'chart' },
+    { id: 'phc-stock', label: 'PHC Stock', labelHi: 'दवा स्टॉक', icon: 'pill' },
+    { id: 'sync', label: 'Sync Center', labelHi: 'सिंक केंद्र', icon: 'sync' },
   ],
 };
 
@@ -306,7 +196,8 @@ function getInitials(name: string): string {
 
 function getRoleInfo(
   role: Role,
-  user: CurrentUser | null
+  user: CurrentUser | null,
+  lang: 'en' | 'hi' = 'en'
 ) {
   const name =
     user?.fullName ||
@@ -326,7 +217,7 @@ function getRoleInfo(
       'Health Centre';
 
     return {
-      label: 'Health Worker',
+      label: lang === 'hi' ? 'स्वास्थ्य कार्यकर्ता (आशा)' : 'Health Worker',
       sub: `${profile?.workerType || 'ASHA'} · ${location}`,
       color: 'bg-brand-600',
       user: name,
@@ -342,7 +233,7 @@ function getRoleInfo(
       'PHC';
 
     return {
-      label: 'Doctor',
+      label: lang === 'hi' ? 'चिकित्सक / डॉक्टर' : 'Doctor',
       sub: `${profile?.specialty || 'Doctor'} · ${facility}`,
       color: 'bg-purple-600',
       user: name,
@@ -358,7 +249,7 @@ function getRoleInfo(
       'Health ID';
 
     return {
-      label: 'Patient',
+      label: lang === 'hi' ? 'रोगी' : 'Patient',
       sub: healthId,
       color: 'bg-teal-600',
       user: name,
@@ -430,8 +321,23 @@ export default function App() {
     prevOfflineRef.current = isOffline;
   }, [isOffline]);
 
-  const [lang, setLang] =
-    useState<'en' | 'hi'>('en');
+  const [lang, setLang] = useState<'en' | 'hi'>(() => {
+    try {
+      const saved = localStorage.getItem('rc_lang');
+      if (saved === 'hi' || saved === 'en') return saved;
+    } catch {}
+    return 'en';
+  });
+
+  const handleSetLang = (newLang: 'en' | 'hi' | ((prev: 'en' | 'hi') => 'en' | 'hi')) => {
+    setLang((prev) => {
+      const next = typeof newLang === 'function' ? newLang(prev) : newLang;
+      try {
+        localStorage.setItem('rc_lang', next);
+      } catch {}
+      return next;
+    });
+  };
 
   const [sidebarOpen, setSidebarOpen] =
     useState(false);
@@ -1004,7 +910,7 @@ export default function App() {
       <LoginScreen
         onLogin={handleLogin}
         lang={lang}
-        setLang={setLang}
+        setLang={handleSetLang}
       />
     );
   }
@@ -1012,7 +918,8 @@ export default function App() {
   const roleInfo =
     getRoleInfo(
       role,
-      currentUser
+      currentUser,
+      lang
     );
 
   const navItems =
@@ -1147,7 +1054,7 @@ export default function App() {
                       }
                     />
 
-                    {item.label}
+                    {lang === 'hi' && item.labelHi ? item.labelHi : item.label}
 
                     {item.id ===
                       'sync' &&
@@ -1301,14 +1208,14 @@ export default function App() {
             />
 
             {isOffline
-              ? 'Offline'
-              : 'Online'}
+              ? (lang === 'hi' ? 'ऑफलाइन' : 'Offline')
+              : (lang === 'hi' ? 'ऑनलाइन' : 'Online')}
 
           </button>
 
           <button
             onClick={() =>
-              setLang(
+              handleSetLang(
                 (language) =>
                   language ===
                   'en'
@@ -1328,7 +1235,7 @@ export default function App() {
               name="lock"
               size={10}
             />
-            Encrypted
+            {lang === 'hi' ? 'सुरक्षित' : 'Encrypted'}
           </div>
 
           {pendingSync >
@@ -1380,6 +1287,8 @@ export default function App() {
                   (alert) => !alert.dismissed
                 ) ?? null
               }
+              currentUser={currentUser}
+              lang={lang}
             />
           )}
 
@@ -1412,6 +1321,7 @@ export default function App() {
                   ? (currentUser?.patientProfile?.healthId || currentUser?.patientProfile?.id)
                   : selectedPatientId
               }
+              lang={lang}
             />
           )}
 
@@ -1453,6 +1363,7 @@ export default function App() {
               currentUser={
                 currentUser
               }
+              lang={lang}
               sosAlerts={sosAlerts.filter(
                 (alert) =>
                   !alert.dismissed
@@ -1481,6 +1392,7 @@ export default function App() {
               patientId={
                 selectedPatientId
               }
+              lang={lang}
             />
           )}
 
@@ -1501,6 +1413,7 @@ export default function App() {
               roomId={
                 teleconsultRoomId || undefined
               }
+              lang={lang}
             />
           )}
 
@@ -1543,6 +1456,7 @@ export default function App() {
                 ''
               }
               currentUser={currentUser}
+              lang={lang}
             />
           )}
 
@@ -1621,6 +1535,8 @@ export default function App() {
               isOffline={
                 isOffline
               }
+              currentUser={currentUser}
+              lang={lang}
             />
           )}
 

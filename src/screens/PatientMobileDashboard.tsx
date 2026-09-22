@@ -33,6 +33,7 @@ interface Props {
   initialTab?: 'overview' | 'appointments' | 'teleconsultation' | 'pharmacy'
   initialModal?: 'book' | 'stock' | null
   navTrigger?: number
+  lang?: 'en' | 'hi'
 }
 
 function QRCodeSVG({ text, size = 180 }: { text: string; size?: number }) {
@@ -119,6 +120,7 @@ export default function PatientMobileDashboard({
   initialTab = 'overview',
   initialModal = null,
   navTrigger = 0,
+  lang = 'en',
 }: Props) {
   const [activeTab, setActiveTab] = useState<
     'overview' | 'appointments' | 'teleconsultation' | 'pharmacy'
