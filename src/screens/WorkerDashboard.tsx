@@ -32,6 +32,12 @@ import {
 import type { MchDueAlertItem, MchRecord } from "../types";
 import { syncEngine } from "../services/syncEngine";
 import PhcStockCheckerModal from "../components/PhcStockCheckerModal";
+import {
+  capturePreciseGpsLocation,
+  sendEmergencySmsFallback,
+  broadcastBleEmergencyRelay,
+  showOfflineGuidanceNotification,
+} from "../services/nativeSosDispatcher";
 
 interface ActiveSosAlert {
   id: string
@@ -1049,52 +1055,58 @@ export default function WorkerDashboard({
 
                 <button
                   onClick={async () => {
-                    try {
-                      const activePt = patients.length > 0 ? patients[0] : null
+                    const activePt = patients.length > 0 ? patients[0] : null
+                    const baseLoc = activePt?.village
+                      ? `${activePt.village} Sector`
+                      : "Lunkaransar Sector 4"
 
+                    // Native Tier 1: High-accuracy GPS capture
+                    const preciseLoc = await capturePreciseGpsLocation(baseLoc)
+                    const patientHId = activePt?.healthId || "RHC-2026-8F4K92"
+                    const vitalsSummary = "Pulse: 118, BP: 85/55, SpO2: 91%"
+
+                    let restSuccess = false
+                    try {
                       const res = await dispatchSosAlert({
                         fromName: dbUser?.fullName || "ASHA Sunita Yadav",
-
                         role: "ASHA Worker",
-
-                        patientHealthId:
-                          activePt?.healthId || "RHC-2026-8F4K92",
-
-                        location: activePt?.village
-                          ? `${activePt.village} Sector`
-                          : "Lunkaransar Sector 4",
-
+                        patientHealthId: patientHId,
+                        location: preciseLoc,
                         targetedDoctorId: selectedDoctor?.id,
-
                         vitalsSnapshot: {
                           pulse: "118 bpm",
-
                           bp: "85/55 mmHg",
-
                           spo2: "91%",
                         },
                       })
 
                       if (res?.id) {
+                        restSuccess = true
                         setActiveSosId(res.id)
-
                         setLiveSosStatus(res)
-
                         if (typeof res.secondsRemaining === "number") {
                           setCountdown(res.secondsRemaining)
                         }
                       }
                     } catch (e) {
                       console.warn(
-                        "Backend SOS dispatch failed, falling back to local state:",
+                        "Backend SOS dispatch failed, triggering Tier 2 (SMS) and Tier 3 (BLE) native fallbacks:",
                         e,
                       )
                     }
 
+                    // Native Tier 2 (Silent SMS) & Tier 3 (BLE Relay) fallback when network is absent or degraded
+                    if (!restSuccess || !navigator.onLine) {
+                      const smsBody = `[RURALCARE EMERGENCY] Patient:${patientHId} Loc:${preciseLoc} Vitals:${vitalsSummary}`
+                      sendEmergencySmsFallback("+919876543210", smsBody).catch(() => {})
+                      broadcastBleEmergencyRelay(`SOS-${Date.now()}`, smsBody).catch(() => {})
+                    }
+
+                    // Native Tier 4: Offline guidance local notification
+                    showOfflineGuidanceNotification(patientHId, preciseLoc).catch(() => {})
+
                     onSOS()
-
                     setSosSent(true)
-
                     setSosConfirm(false)
                   }}
                   className="py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-sm transition-colors"

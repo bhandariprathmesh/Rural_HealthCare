@@ -14,10 +14,11 @@ function resolveApiBaseUrl(): string {
   let base = envUrl;
 
   if (!base) {
-    if (import.meta.env.DEV) {
+    const isCapacitor = typeof window !== 'undefined' && (!!(window as any)?.Capacitor || window.location.protocol === 'capacitor:');
+    if (import.meta.env.DEV && !isCapacitor) {
       base = 'http://localhost:5000';
     } else {
-      // Production fallback so deployed frontend never calls localhost
+      // Production & native mobile fallback so app never calls localhost on phone
       base = 'https://rural-healthcare-342y.onrender.com';
     }
   }

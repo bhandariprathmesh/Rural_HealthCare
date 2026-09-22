@@ -3,6 +3,12 @@ import type { Role } from './types';
 import { Icon, OfflineIndicator, ErrorBoundary } from './components/shared';
 import { getCurrentUser, getToken, clearToken, dispatchSosAlert, getActiveSosAlerts, acceptSosAlert, declineSosAlert, getActiveTeleconsultationCall, getTeleconsultationWsUrl } from './api/client';
 import { syncEngine } from './services/syncEngine';
+import {
+  capturePreciseGpsLocation,
+  sendEmergencySmsFallback,
+  broadcastBleEmergencyRelay,
+  showOfflineGuidanceNotification,
+} from './services/nativeSosDispatcher';
 
 import LoginScreen from './screens/LoginScreen';
 import WorkerDashboard from './screens/WorkerDashboard';
@@ -726,27 +732,26 @@ export default function App() {
           patientHealthId: patientId || 'RHC-EMERGENCY',
           location: finalLocation,
           targetedDoctorId: currentUser?.patientProfile?.familyDoctorId || undefined,
-        }).catch((err) => console.warn('SOS broadcast error:', err));
+        }).catch((err) => {
+          console.warn('SOS broadcast error, activating native SMS & BLE relay:', err);
+          const smsText = `[RURALCARE EMERGENCY] From:${from} (${fromRole}) Pt:${patientId || 'RHC-EMERGENCY'} Loc:${finalLocation}`;
+          sendEmergencySmsFallback('+919876543210', smsText).catch(() => {});
+          broadcastBleEmergencyRelay(id, smsText).catch(() => {});
+        });
+      } else {
+        const smsText = `[RURALCARE EMERGENCY] From:${from} (${fromRole}) Pt:${patientId || 'RHC-EMERGENCY'} Loc:${finalLocation}`;
+        sendEmergencySmsFallback('+919876543210', smsText).catch(() => {});
+        broadcastBleEmergencyRelay(id, smsText).catch(() => {});
       }
+      showOfflineGuidanceNotification(patientId || 'RHC-EMERGENCY', finalLocation).catch(() => {});
     };
 
-    if (typeof navigator !== 'undefined' && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const gpsCoords = `${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)} (${baseLocation})`;
-          setSosAlerts((alerts) =>
-            alerts.map((alert) => (alert.id === id ? { ...alert, location: gpsCoords } : alert))
-          );
-          sendAlert(gpsCoords);
-        },
-        () => {
-          sendAlert(baseLocation);
-        },
-        { timeout: 3000, maximumAge: 60000 }
+    capturePreciseGpsLocation(baseLocation).then((preciseLocation) => {
+      setSosAlerts((alerts) =>
+        alerts.map((alert) => (alert.id === id ? { ...alert, location: preciseLocation } : alert))
       );
-    } else {
-      sendAlert(baseLocation);
-    }
+      sendAlert(preciseLocation);
+    });
   }
 
   function dismissSOS(id: string) {
