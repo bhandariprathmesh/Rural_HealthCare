@@ -689,7 +689,7 @@ export default function App() {
   ) {
     const id = `SOS-${Date.now()}`;
 
-    const location =
+    const baseLocation =
       currentUser?.patientProfile?.village ||
       currentUser?.workerProfile?.village ||
       currentUser?.workerProfile?.assignedPhc ||
@@ -702,7 +702,7 @@ export default function App() {
         from,
         role: fromRole,
         patientId,
-        location,
+        location: baseLocation,
         ts: new Date().toLocaleTimeString(
           'en-IN',
           {
@@ -718,14 +718,34 @@ export default function App() {
       ...alerts,
     ]);
 
-    if (!isOffline) {
-      dispatchSosAlert({
-        fromName: from,
-        role: fromRole,
-        patientHealthId: patientId || 'RHC-EMERGENCY',
-        location,
-        targetedDoctorId: currentUser?.patientProfile?.familyDoctorId || undefined,
-      }).catch((err) => console.warn('SOS broadcast error:', err));
+    const sendAlert = (finalLocation: string) => {
+      if (!isOffline) {
+        dispatchSosAlert({
+          fromName: from,
+          role: fromRole,
+          patientHealthId: patientId || 'RHC-EMERGENCY',
+          location: finalLocation,
+          targetedDoctorId: currentUser?.patientProfile?.familyDoctorId || undefined,
+        }).catch((err) => console.warn('SOS broadcast error:', err));
+      }
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const gpsCoords = `${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)} (${baseLocation})`;
+          setSosAlerts((alerts) =>
+            alerts.map((alert) => (alert.id === id ? { ...alert, location: gpsCoords } : alert))
+          );
+          sendAlert(gpsCoords);
+        },
+        () => {
+          sendAlert(baseLocation);
+        },
+        { timeout: 3000, maximumAge: 60000 }
+      );
+    } else {
+      sendAlert(baseLocation);
     }
   }
 

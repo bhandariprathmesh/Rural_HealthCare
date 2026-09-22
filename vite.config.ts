@@ -15,6 +15,36 @@ export default defineConfig(({ mode }) => {
     build: {
       sourcemap: emitSourcemaps ? 'inline' : false,
       minify: !emitSourcemaps,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
+              return 'vendor-react';
+            }
+            if (id.includes('node_modules/lucide-react')) {
+              return 'vendor-icons';
+            }
+            if (id.includes('node_modules')) {
+              return 'vendor-utils';
+            }
+            if (id.includes('src/screens/AdminDashboard')) {
+              return 'screen-admin';
+            }
+            if (id.includes('src/screens/DoctorDashboard')) {
+              return 'screen-doctor';
+            }
+            if (id.includes('src/screens/WorkerDashboard')) {
+              return 'screen-worker';
+            }
+            if (id.includes('src/screens/PatientMobileDashboard') || id.includes('src/screens/PatientRegistration')) {
+              return 'screen-patient';
+            }
+            if (id.includes('src/screens/TeleconsultationRoom')) {
+              return 'screen-teleconsult';
+            }
+          },
+        },
+      },
     },
     plugins: [
       react(),

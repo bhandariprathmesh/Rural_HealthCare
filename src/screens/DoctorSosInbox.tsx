@@ -185,10 +185,21 @@ export default function DoctorSosInbox({ navigate, isOffline = false }: Props) {
 
                     <div>
                       <span className="text-gray-400 font-medium block">Location / Village</span>
-                      <span className="text-sm font-semibold text-gray-800 flex items-center gap-1">
-                        <Icon name="location" size={14} className="text-red-500" />
-                        {alert.location}
-                      </span>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-sm font-semibold text-gray-800 flex items-center gap-1">
+                          <Icon name="location" size={14} className="text-red-500 shrink-0" />
+                          <span>{alert.location}</span>
+                        </span>
+                        <a
+                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(alert.location)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-md text-[11px] font-semibold transition-colors shrink-0"
+                          title="Open GPS location in Google Maps"
+                        >
+                          <span>🗺️ Maps</span>
+                        </a>
+                      </div>
                     </div>
                   </div>
 

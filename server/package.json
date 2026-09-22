@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/auto-sync.js && tsx watch src/index.ts",
+    "postinstall": "prisma generate",
     "build": "prisma generate && prisma db push --accept-data-loss --skip-generate && tsc",
     "start": "node dist/index.js",
     "prisma:generate": "prisma generate",
