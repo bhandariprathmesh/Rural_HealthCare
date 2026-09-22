@@ -99,6 +99,7 @@ model User {
   pinHash      String?
   active       Boolean   @default(true)
   isDemo       Boolean   @default(false)
+  activeSessionId String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 

@@ -221,19 +221,23 @@ export const DEMO_PROFILES: Record<string, AuthUser> = {
 };
 
 export function saveToken(token: string) {
-  if (typeof sessionStorage !== "undefined") {
-    sessionStorage.setItem("rc_token", token)
-  }
   if (typeof localStorage !== "undefined") {
-    localStorage.removeItem("rc_token")
+    localStorage.setItem("rc_token", token);
+  }
+  if (typeof sessionStorage !== "undefined") {
+    sessionStorage.setItem("rc_token", token);
   }
 }
 
 export function getToken(): string | null {
-  if (typeof sessionStorage !== "undefined") {
-    return sessionStorage.getItem("rc_token")
+  if (typeof localStorage !== "undefined") {
+    const localToken = localStorage.getItem("rc_token");
+    if (localToken) return localToken;
   }
-  return null
+  if (typeof sessionStorage !== "undefined") {
+    return sessionStorage.getItem("rc_token");
+  }
+  return null;
 }
 
 export function clearToken() {
@@ -299,7 +303,8 @@ async function request<T>(
   }
 
   const controller = new AbortController();
-  const timeoutMs = (options as any)?.timeout || 6000;
+  const isAuthRequest = cleanEndpoint.includes('/auth/login') || cleanEndpoint.includes('/auth/register');
+  const timeoutMs = (options as any)?.timeout || (isAuthRequest ? 35000 : 12000);
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
@@ -325,12 +330,17 @@ async function request<T>(
           json.errors?.[0]?.message ||
           `Request failed with status ${res.status}`;
 
+      // Concurrent session revocation handling
+      if (res.status === 401 && (detailedMsg.includes('SESSION_REVOKED') || detailedMsg.includes('another device'))) {
+        clearToken();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('rc:session_revoked', { detail: { message: detailedMsg } }));
+        }
+      }
+
       const error: any = new Error(detailedMsg);
-
       error.status = res.status;
-
       error.data = json;
-
       throw error;
     }
 
@@ -339,7 +349,7 @@ async function request<T>(
     clearTimeout(timer);
     if (err?.name === 'AbortError') {
       const abortError: any = new Error(
-        "Request timed out. Server is waking up or unreachable; switching to offline demo mode."
+        "Request timed out. Server is waking up or network is slow. Please retry in a few moments."
       );
       abortError.isTimeout = true;
       throw abortError;
@@ -472,12 +482,25 @@ export async function loginUser(
       !err.status ||
       err.message?.includes('Network error') ||
       err.message?.includes('unreachable') ||
-      err.message?.includes('Failed to fetch');
+      err.message?.includes('Failed to fetch') ||
+      err.isTimeout;
 
     if (isNetworkError) {
       const fallbackUser = DEMO_PROFILES[normalizedRole];
-      if (fallbackUser) {
-        console.warn('Backend unreachable: using offline demo session for role', normalizedRole);
+      const enteredEmail = email.trim().toLowerCase();
+      const isDemoEmail = fallbackUser && (
+        enteredEmail === fallbackUser.email?.toLowerCase() ||
+        enteredEmail === fallbackUser.phone ||
+        enteredEmail.startsWith('demo') ||
+        (normalizedRole === 'DOCTOR' && (enteredEmail === 'doctor@ruralcare.in' || enteredEmail === 'dr.ankit@ruralcare.in')) ||
+        (normalizedRole === 'WORKER' && (enteredEmail === 'asha.worker@ruralcare.in' || enteredEmail === 'worker@ruralcare.in')) ||
+        (normalizedRole === 'PATIENT' && enteredEmail === 'patient@ruralcare.in') ||
+        (normalizedRole === 'ADMIN' && (enteredEmail === 'admin@ruralcare.in' || enteredEmail === 'rajiv@ruralcare.in'))
+      );
+
+      // Strictly allow offline demo session ONLY if credentials entered match demo user
+      if (isDemoEmail && fallbackUser) {
+        console.warn('Backend unreachable: using offline demo session for verified demo account', normalizedRole);
         const offlineToken = `offline_demo_${normalizedRole.toLowerCase()}_${Date.now()}`;
         saveToken(offlineToken);
         localStorage.setItem('rc_cached_user', JSON.stringify(fallbackUser));
@@ -486,6 +509,11 @@ export async function loginUser(
           user: fallbackUser,
         };
       }
+
+      // If a custom non-demo account was entered, do not silently impersonate demo doctor/worker!
+      throw new Error(
+        'Server is taking longer to respond (waking up) or network is unreachable. Please wait 10 seconds and try again.'
+      );
     }
 
     throw err;
@@ -493,10 +521,20 @@ export async function loginUser(
 }
 
 export async function getCurrentUser(): Promise<AuthUser | null> {
-  const token = getToken()
+  const token = getToken();
 
   if (!token) {
-    return null
+    return null;
+  }
+
+  // If using an offline demo session, load cached profile
+  if (token.startsWith('offline_demo_')) {
+    const cached = localStorage.getItem('rc_cached_user');
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch {}
+    }
   }
 
   try {
@@ -510,20 +548,19 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
       localStorage.setItem('rc_cached_user', JSON.stringify(res.data.user));
       return res.data.user;
     }
-  } catch {
+  } catch (err: any) {
+    // If session was revoked due to concurrent login elsewhere, clear immediately
+    if (err?.message?.includes('SESSION_REVOKED') || err?.status === 401) {
+      clearToken();
+      return null;
+    }
+
     const cached = localStorage.getItem('rc_cached_user');
     if (cached) {
       try {
         return JSON.parse(cached);
       } catch {}
     }
-  }
-
-  const cached = localStorage.getItem('rc_cached_user');
-  if (cached) {
-    try {
-      return JSON.parse(cached);
-    } catch {}
   }
 
   return null;

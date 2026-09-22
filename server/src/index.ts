@@ -78,6 +78,7 @@ app.use((_req, _res, next) => {
 app.use(errorHandler);
 
 import { startSosEscalationSweeper } from './services/sosEscalation.service.js';
+import { setupTeleconsultationSignaling } from './services/teleconsultation.signaling.js';
 
 // Start server
 const server = app.listen(PORT, '0.0.0.0', () => {
@@ -90,6 +91,9 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 
   // Start background 10s sweeper for SOS escalation deadlines
   startSosEscalationSweeper();
+
+  // Initialize WebRTC signaling and cross-device session concurrency WebSocket server
+  setupTeleconsultationSignaling(server);
 });
 
 // Graceful shutdown

@@ -30,6 +30,26 @@ export interface ActiveCallInfo {
 // In-memory registry of active teleconsultation rooms
 const rooms = new Map<string, Set<SignalingPeer>>();
 
+// In-memory registry of user WebSockets for cross-device concurrency sync
+const userSockets = new Map<string, Set<WebSocket>>();
+
+export function terminateUserOtherSessions(userId: string, newSessionId: string) {
+  const sockets = userSockets.get(userId);
+  if (sockets && sockets.size > 0) {
+    const payload = JSON.stringify({
+      type: 'session:terminated',
+      reason: 'concurrent_login',
+      newSessionId,
+      message: 'You have been logged out because your account was logged in from another device.',
+    });
+    for (const client of sockets) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(payload);
+      }
+    }
+  }
+}
+
 // In-memory registry of active doctor calls awaiting patient response (keyed by patientId/healthId)
 export const activeCalls = new Map<string, ActiveCallInfo>();
 
@@ -139,6 +159,20 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
       try {
         const message = JSON.parse(data.toString());
         const { type, sessionId } = message;
+
+        if (type === 'session:bind') {
+          const targetUserId = message.userId;
+          if (targetUserId) {
+            (ws as any).boundUserId = targetUserId;
+            (ws as any).boundSessionId = message.sessionId;
+            if (!userSockets.has(targetUserId)) {
+              userSockets.set(targetUserId, new Set());
+            }
+            userSockets.get(targetUserId)!.add(ws);
+            ws.send(JSON.stringify({ type: 'session:bound', status: 'ok', userId: targetUserId }));
+          }
+          return;
+        }
 
         if (!sessionId && type !== 'call:check') {
           ws.send(JSON.stringify({ type: 'error', message: 'sessionId is required' }));
@@ -545,7 +579,19 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
       }
     });
 
+    const cleanUpUser = () => {
+      const boundId = (ws as any).boundUserId;
+      if (boundId) {
+        const set = userSockets.get(boundId);
+        if (set) {
+          set.delete(ws);
+          if (set.size === 0) userSockets.delete(boundId);
+        }
+      }
+    };
+
     ws.on('close', () => {
+      cleanUpUser();
       if (currentPeer) {
         cleanUpPeer(currentPeer);
       }
@@ -553,6 +599,7 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
 
     ws.on('error', (err: any) => {
       console.error(`[Teleconsultation WS] Socket error (${clientIp}):`, err.message);
+      cleanUpUser();
       if (currentPeer) {
         cleanUpPeer(currentPeer);
       }

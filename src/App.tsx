@@ -559,10 +559,115 @@ export default function App() {
     };
   }, [role, currentUser, screen]);
 
+  // Cross-device single-session concurrency & real-time eviction listener
   useEffect(() => {
-    // Purge legacy development token in localStorage if no active sessionStorage session exists
-    if (typeof localStorage !== 'undefined' && typeof sessionStorage !== 'undefined' && !sessionStorage.getItem('rc_token')) {
-      localStorage.removeItem('rc_token');
+    if (!currentUser?.id) return;
+
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: any = null;
+    let isDisposed = false;
+
+    const connectSessionWs = () => {
+      try {
+        ws = new WebSocket(getTeleconsultationWsUrl());
+
+        ws.onopen = () => {
+          if (currentUser?.id) {
+            ws?.send(
+              JSON.stringify({
+                type: 'session:bind',
+                userId: currentUser.id,
+                sessionId: (currentUser as any).sessionId || (currentUser as any).activeSessionId,
+              })
+            );
+          }
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'session:terminated') {
+              clearToken();
+              setCurrentUser(null);
+              setRole('login');
+              setScreen('login');
+              alert(
+                data.message ||
+                  'You have been logged out because your account was logged in from another device.'
+              );
+            }
+          } catch {}
+        };
+
+        ws.onclose = () => {
+          if (!isDisposed) {
+            reconnectTimeout = setTimeout(connectSessionWs, 5000);
+          }
+        };
+
+        ws.onerror = () => {};
+      } catch {}
+    };
+
+    connectSessionWs();
+
+    const handleSessionRevoked = (e: any) => {
+      clearToken();
+      setCurrentUser(null);
+      setRole('login');
+      setScreen('login');
+      alert(
+        e.detail?.message ||
+          'You have been logged out because your account was logged in from another device.'
+      );
+    };
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'rc_token') {
+        if (!e.newValue) {
+          clearToken();
+          setCurrentUser(null);
+          setRole('login');
+          setScreen('login');
+        } else if (e.newValue !== e.oldValue) {
+          getCurrentUser().then((u) => {
+            if (u) {
+              setCurrentUser(u);
+              const r = normalizeRole(u.role);
+              setRole(r);
+              setScreen(DEFAULT_SCREEN[r]);
+            } else {
+              clearToken();
+              setCurrentUser(null);
+              setRole('login');
+              setScreen('login');
+            }
+          });
+        }
+      }
+    };
+
+    window.addEventListener('rc:session_revoked', handleSessionRevoked);
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      isDisposed = true;
+      clearTimeout(reconnectTimeout);
+      window.removeEventListener('rc:session_revoked', handleSessionRevoked);
+      window.removeEventListener('storage', handleStorageChange);
+      try {
+        ws?.close();
+      } catch {}
+    };
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    // Restore persistent token on mobile / fresh launch so session is not lost
+    if (typeof localStorage !== 'undefined' && typeof sessionStorage !== 'undefined') {
+      const savedToken = localStorage.getItem('rc_token');
+      if (savedToken && !sessionStorage.getItem('rc_token')) {
+        sessionStorage.setItem('rc_token', savedToken);
+      }
     }
 
     const token = getToken();

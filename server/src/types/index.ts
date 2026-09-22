@@ -11,6 +11,7 @@ export interface AuthUserPayload {
   doctorId?: string;
   patientId?: string;
   facilityId?: string;
+  sessionId?: string;
 }
 
 export interface AuthenticatedRequest extends Request {

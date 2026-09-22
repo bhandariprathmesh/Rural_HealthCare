@@ -10,6 +10,7 @@ import {
   AuthUserPayload,
   UserRole,
 } from '../types/index.js';
+import { terminateUserOtherSessions } from '../services/teleconsultation.signaling.js';
 
 const JWT_SECRET =
   process.env.JWT_SECRET ||
@@ -388,6 +389,8 @@ export async function register(
       };
     }
 
+    const newSessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
     const user =
       await prisma.user.create({
         data: {
@@ -396,6 +399,7 @@ export async function register(
           role,
           fullName,
           phone: body.phone,
+          activeSessionId: newSessionId,
           ...roleData,
         },
 
@@ -435,6 +439,8 @@ export async function register(
 
       facilityId:
         user.doctorProfile?.facilityId,
+
+      sessionId: newSessionId,
     };
 
     const token =
@@ -592,6 +598,17 @@ export async function login(
       );
     }
 
+    const newSessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+    // Update activeSessionId in PostgreSQL
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { activeSessionId: newSessionId },
+    });
+
+    // Notify & evict any other connected session for this user (Web or Android)
+    terminateUserOtherSessions(user.id, newSessionId);
+
     const payload: AuthUserPayload = {
       id: user.id,
 
@@ -615,6 +632,8 @@ export async function login(
 
       facilityId:
         user.doctorProfile?.facilityId,
+
+      sessionId: newSessionId,
     };
 
     const token =
@@ -698,6 +717,13 @@ export async function getCurrentUser(
       throw new AppError(
         'User account not found.',
         404
+      );
+    }
+
+    if (req.user.sessionId && user.activeSessionId && user.activeSessionId !== req.user.sessionId) {
+      throw new AppError(
+        'SESSION_REVOKED: You have been logged out because your account was logged in from another device.',
+        401
       );
     }
 
