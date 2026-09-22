@@ -251,9 +251,34 @@ export function clearToken() {
   }
 }
 
+// In-memory SWR client cache to slash latency on repeated views/tab changes
+const requestCache = new Map<string, { timestamp: number; data: any }>();
+const CACHE_TTL_MS = 20000; // 20s TTL
+
+export function invalidateClientCache(prefix?: string) {
+  if (!prefix) {
+    requestCache.clear();
+  } else {
+    for (const key of requestCache.keys()) {
+      if (key.includes(prefix)) {
+        requestCache.delete(key);
+      }
+    }
+  }
+}
+
+// Purge legacy stale doctor name from localStorage on startup
+if (typeof localStorage !== 'undefined') {
+  try {
+    const storedDoc = localStorage.getItem('last_calling_doctor');
+    if (storedDoc && storedDoc.toLowerCase().includes('rushi')) {
+      localStorage.removeItem('last_calling_doctor');
+    }
+  } catch {}
+}
+
 async function request<T>(
   endpoint: string,
-
   options: RequestInit = {},
 ): Promise<T> {
   let cleanEndpoint = endpoint.trim();
@@ -277,7 +302,19 @@ async function request<T>(
     url = `${API_BASE_URL}${cleanEndpoint}`;
   }
 
-  const token = getToken()
+  const isGet = !options.method || options.method.toUpperCase() === 'GET';
+  const token = getToken();
+
+  // If mutation (POST/PUT/PATCH/DELETE), invalidate cache
+  if (!isGet) {
+    invalidateClientCache();
+  } else {
+    const cacheKey = `${token || 'anon'}:${url}`;
+    const cached = requestCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return cached.data as T;
+    }
+  }
 
   const emergencyToken =
     typeof sessionStorage !== "undefined"
@@ -342,6 +379,11 @@ async function request<T>(
       error.status = res.status;
       error.data = json;
       throw error;
+    }
+
+    if (isGet) {
+      const cacheKey = `${token || 'anon'}:${url}`;
+      requestCache.set(cacheKey, { timestamp: Date.now(), data: json });
     }
 
     return json;
@@ -766,7 +808,7 @@ export interface FacilityItem {
 
 const DEFAULT_FACILITIES: FacilityItem[] = [
   {
-    id: 'HFR-2024-SANJIVANI',
+    id: '485ba729-d767-403b-b7a5-acdcf6db5956',
     hfrId: 'HFR-2024-SANJIVANI',
     facilityName: 'Sanjivani PHC',
     facilityType: 'PHC',
@@ -795,6 +837,23 @@ const DEFAULT_FACILITIES: FacilityItem[] = [
 ];
 
 export async function getFacilities(): Promise<FacilityItem[]> {
+  try {
+    const refRes = await request<{
+      data?: { facilities: Array<{ id: string; name: string; type?: string; district?: string; state?: string; hasEmergency?: boolean; hfrId?: string }> }
+    }>("/referrals/facilities");
+    if (refRes?.data?.facilities && refRes.data.facilities.length > 0) {
+      return refRes.data.facilities.map((f: any) => ({
+        id: f.id,
+        hfrId: f.hfrId || f.id,
+        facilityName: f.name || f.facilityName,
+        facilityType: f.type || f.facilityType || 'PHC',
+        district: f.district || 'Bikaner',
+        state: f.state || 'Rajasthan',
+        hasEmergency: f.hasEmergency ?? true,
+      }));
+    }
+  } catch {}
+
   try {
     const res = await request<{
       data: FacilityItem[]

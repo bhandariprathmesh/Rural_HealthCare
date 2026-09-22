@@ -69,8 +69,29 @@ export async function bookAppointment(
       throw new AppError(`Doctor '${body.doctorId}' was not found.`, 404)
     }
 
-    const facilityId = body.facilityId || doctor.facilityId
-    const cleanDate = body.scheduledDate.trim()
+    // 2.1 Resolve Facility safely
+    let resolvedFacilityId = doctor.facilityId;
+    if (body.facilityId && typeof body.facilityId === "string" && body.facilityId.trim()) {
+      const targetFacId = body.facilityId.trim();
+      const fac = await prisma.facility.findFirst({
+        where: {
+          OR: [
+            { id: targetFacId },
+            { hfrId: targetFacId },
+            { name: { contains: targetFacId, mode: "insensitive" } },
+          ],
+        },
+      });
+      if (fac) {
+        resolvedFacilityId = fac.id;
+      }
+    }
+    if (!resolvedFacilityId) {
+      const firstFac = await prisma.facility.findFirst();
+      if (firstFac) resolvedFacilityId = firstFac.id;
+    }
+    const facilityId = resolvedFacilityId as string;
+    const cleanDate = body.scheduledDate.trim();
 
     // 3. Compute priority if not explicitly provided
     let priority: AppointmentPriority = AppointmentPriority.ROUTINE

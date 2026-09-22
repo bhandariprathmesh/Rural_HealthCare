@@ -25,6 +25,7 @@ import {
 interface Props {
   navigate: (s: string, patientId?: string) => void;
   patientId?: string | null;
+  currentUser?: any;
 }
 
 const TABS = [
@@ -35,7 +36,7 @@ const TABS = [
   { id: 'actions', label: 'Actions' },
 ];
 
-export default function DoctorPatientView({ navigate, patientId }: Props) {
+export default function DoctorPatientView({ navigate, patientId, currentUser }: Props) {
   const [activeTab, setActiveTab] = useState('overview');
   const [addingDiagnosis, setAddingDiagnosis] = useState(false);
   const [diagnosis, setDiagnosis] = useState('');
@@ -47,10 +48,11 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
   const [consultations, setConsultations] = useState<any[]>([]);
   const [medicines, setMedicines] = useState<any[]>([]);
   const [activeReferral, setActiveReferral] = useState<any>(null);
-  const [dbUser, setDbUser] = useState<any>(null);
+  const [dbUser, setDbUser] = useState<any>(currentUser || null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const [directoryList, setDirectoryList] = useState<any[]>([]);
 
   // Access Control State
   const [hasAccess, setHasAccess] = useState(true);
@@ -111,12 +113,15 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
       try {
         let targetId: string | undefined = selectedTargetId || undefined;
 
-        // If no targetId passed, fetch the patient list and pick the first one
+        // If no targetId passed, load directory list and display selection screen
         if (!targetId) {
           const patientList = await getPatients().catch(() => []);
-          if (patientList && patientList.length > 0) {
-            targetId = patientList[0].healthId || patientList[0].id;
+          if (mounted) {
+            setDirectoryList(patientList || []);
+            setPatient(null);
+            setLoading(false);
           }
+          return;
         }
 
         if (targetId) {
@@ -364,6 +369,136 @@ export default function DoctorPatientView({ navigate, patientId }: Props) {
   }
 
   if (!patient) {
+    if (directoryList && directoryList.length > 0) {
+      const filteredDirectory = directoryList.filter((p: any) => {
+        if (!patientSearch.trim()) return true;
+        const q = patientSearch.toLowerCase();
+        return (
+          (p.name && p.name.toLowerCase().includes(q)) ||
+          (p.healthId && p.healthId.toLowerCase().includes(q)) ||
+          (p.village && p.village.toLowerCase().includes(q)) ||
+          (p.phone && p.phone.includes(q))
+        );
+      });
+
+      return (
+        <div className="p-4 lg:p-6 space-y-6 max-w-6xl mx-auto">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => navigate('doctor-dashboard')}
+                className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <Icon name="chevron_right" size={18} className="rotate-180 text-gray-600" />
+              </button>
+              <div>
+                <h1 className="font-display text-2xl font-bold text-gray-900">Patient Records Directory</h1>
+                <p className="text-xs text-gray-500">
+                  Select a registered patient to review clinical history, OPD records, and write prescriptions
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Search Bar */}
+          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-2xl px-4 py-3 shadow-sm focus-within:ring-2 focus-within:ring-brand-400">
+            <Icon name="search" size={18} className="text-gray-400 shrink-0" />
+            <input
+              type="text"
+              value={patientSearch}
+              onChange={(e) => setPatientSearch(e.target.value)}
+              placeholder="Search patients by Name, Health ID, Phone, or Village..."
+              className="w-full text-sm focus:outline-none bg-transparent font-medium"
+            />
+            {patientSearch && (
+              <button
+                type="button"
+                onClick={() => setPatientSearch('')}
+                className="text-gray-400 hover:text-gray-600 text-xs font-semibold px-2 py-1 bg-gray-100 rounded-lg cursor-pointer"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {/* Patient Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredDirectory.map((p: any) => {
+              const risk = (p.riskLevel || 'LOW').toUpperCase();
+              return (
+                <div
+                  key={p.id || p.healthId}
+                  onClick={() => handleSelectPatient(p)}
+                  className="bg-white border border-gray-200 hover:border-brand-500 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all cursor-pointer flex flex-col justify-between gap-3 group"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-10 h-10 rounded-xl bg-brand-50 text-brand-700 font-bold flex items-center justify-center text-sm">
+                          {(p.name || 'P').charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="font-bold text-gray-900 group-hover:text-brand-600 transition-colors">
+                            {p.name}
+                          </div>
+                          {p.nameHi && <div className="text-[11px] text-gray-500">{p.nameHi}</div>}
+                        </div>
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          risk === 'HIGH'
+                            ? 'bg-red-50 text-red-700 border border-red-200'
+                            : risk === 'MEDIUM' || risk === 'MODERATE'
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        }`}
+                      >
+                        {risk} RISK
+                      </span>
+                    </div>
+
+                    <div className="text-xs text-gray-600 space-y-1">
+                      <div className="flex items-center gap-1.5 font-mono text-[11px] text-gray-500">
+                        <Icon name="credit_card" size={12} />
+                        {p.healthId || p.id}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Icon name="map_pin" size={12} className="text-gray-400" />
+                        {p.village || 'Govindpur'}, {p.district || 'Bikaner'}
+                      </div>
+                      <div className="flex items-center gap-1.5 text-gray-400 text-[11px]">
+                        {p.gender || 'Patient'} · {p.age ? `${p.age} yrs` : 'Adult'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSelectPatient(p);
+                    }}
+                    className="w-full mt-2 py-2 px-3 bg-brand-50 hover:bg-brand-600 text-brand-700 hover:text-white rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <Icon name="file_text" size={13} />
+                    Open Clinical Record
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          {filteredDirectory.length === 0 && (
+            <div className="p-8 text-center bg-gray-50 rounded-2xl border border-gray-200">
+              <Icon name="user" size={32} className="text-gray-400 mx-auto mb-2" />
+              <div className="font-bold text-gray-700">No patients found</div>
+              <p className="text-xs text-gray-500 mt-1">Try searching with a different name or Health ID</p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     return (
       <div className="p-8 max-w-4xl mx-auto text-center">
         <Icon name="user" size={36} className="text-gray-300 mx-auto mb-2" />

@@ -337,7 +337,7 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
               sessionId,
               patientId: session.patientId,
               doctorId: session.doctorId,
-              doctorName: session.doctorName || 'Dr. rushi pansare (PHC Medical Officer)',
+              doctorName: session.doctorName || 'Dr. Ankit Sharma (PHC Medical Officer)',
               facilityName: session.facilityName,
               status: 'ACTIVE',
             });
@@ -356,6 +356,70 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
                   );
                 }
               }
+            }
+            break;
+          }
+
+          // =========================================================================
+          // 2.1 PATIENT INITIATES CONSULTATION REQUEST TO ON-DUTY DOCTOR
+          // =========================================================================
+          case 'consultation:patient_request': {
+            const { patientId, patientName, doctorId, doctorName, facilityName, reason } = message;
+            const targetDocId = doctorId || 'doc-1';
+            console.log(`[Teleconsultation WS] Patient ${patientName || patientId} initiated call to Doctor: ${targetDocId}`);
+
+            const sessionInfo: ActiveSessionInfo = {
+              sessionId,
+              patientId,
+              doctorId: targetDocId,
+              doctorName: doctorName || 'Dr. Ankit Sharma',
+              facilityName: facilityName || 'PHC Lunkaransar',
+              startedAt: Date.now(),
+              status: 'RINGING',
+            };
+
+            sessionsBySessionId.set(sessionId, sessionInfo);
+            activeCalls.set(patientId, sessionInfo);
+
+            // Broadcast incoming call notification to doctor dashboards
+            broadcastAll({
+              type: 'consultation:incoming_from_patient',
+              sessionId,
+              patientId,
+              patientName: patientName || 'Patient',
+              doctorId: targetDocId,
+              doctorName: sessionInfo.doctorName,
+              facilityName: sessionInfo.facilityName,
+              reason: reason || 'Patient Requested Video Consultation',
+              status: 'RINGING',
+            });
+
+            ws.send(
+              JSON.stringify({
+                type: 'consultation:request_sent',
+                sessionId,
+                status: 'RINGING',
+              })
+            );
+            break;
+          }
+
+          // =========================================================================
+          // 2.2 DOCTOR ACCEPTS PATIENT-INITIATED CALL
+          // =========================================================================
+          case 'consultation:doctor_accept': {
+            const session = sessionsBySessionId.get(sessionId);
+            if (session) {
+              session.status = 'ACTIVE';
+              broadcastAll({
+                type: 'consultation:active',
+                sessionId,
+                patientId: session.patientId,
+                doctorId: session.doctorId,
+                doctorName: session.doctorName,
+                facilityName: session.facilityName,
+                status: 'ACTIVE',
+              });
             }
             break;
           }
@@ -454,7 +518,7 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
                 type: 'call:joined',
                 sessionId,
                 role,
-                doctorName: existingSession?.doctorName || 'Dr. rushi pansare (PHC Medical Officer)',
+                doctorName: existingSession?.doctorName || 'Dr. Ankit Sharma (PHC Medical Officer)',
                 peerCount: room.size,
                 status: existingSession?.status || 'RINGING',
                 isReconnection,

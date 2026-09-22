@@ -286,18 +286,19 @@ export default function TeleconsultationRoom({
     const qDoc = queryParams.get('doctorName');
     if (qDoc) return qDoc;
     const stored = localStorage.getItem('last_calling_doctor');
-    return stored || 'Dr. rushi pansare (PHC Medical Officer)';
+    if (stored && !stored.toLowerCase().includes('rushi')) return stored;
+    return 'Dr. Ankit Sharma (PHC Medical Officer)';
   });
 
   // Doctor Name: If logged-in user is doctor, use their name. If logged-in user is patient, use remote doctor name!
   const doctorName = isDoctor
-    ? (currentUser?.doctorProfile?.name || currentUser?.fullName || 'Dr. rushi pansare (PHC Medical Officer)')
-    : (remoteDoctorName || 'Dr. rushi pansare (PHC Medical Officer)');
+    ? (currentUser?.doctorProfile?.name || currentUser?.fullName || 'Dr. Ankit Sharma (PHC Medical Officer)')
+    : (remoteDoctorName || 'Dr. Ankit Sharma (PHC Medical Officer)');
 
   // Patient Name: If logged-in user is patient, use their own name. If logged-in user is doctor, use selected patient's name!
   const patientName = !isDoctor
-    ? (currentUser?.patientProfile?.name || currentUser?.fullName || patient?.name || 'Gayatri Pansare')
-    : (patient?.name || (selectedPatientId ? patientList.find(p => p.healthId === selectedPatientId || p.id === selectedPatientId)?.name : null) || 'Gayatri Pansare');
+    ? (currentUser?.patientProfile?.name || currentUser?.fullName || patient?.name || 'Patient')
+    : (patient?.name || (selectedPatientId ? patientList.find(p => p.healthId === selectedPatientId || p.id === selectedPatientId)?.name : null) || 'Patient');
 
   // --------------------------------------------------------------------------
   // 1. Local Video Element Attachment (Guaranteed Callback Ref)
@@ -497,15 +498,19 @@ export default function TeleconsultationRoom({
           const list = await getPatients().catch(() => []);
           if (mounted && list && list.length > 0) {
             setPatientList(list);
-            const first = list[0];
-            setSelectedPatientId(first.healthId || first.id);
-            const pRes = await getPatientByHealthId(first.healthId || first.id).catch(() => null);
-            if (mounted && pRes?.patient) {
-              setPatient({
-                ...pRes.patient,
-                consultations: pRes.consultations || [],
-                referrals: pRes.referrals || [],
-              });
+            if (!isDoctor) {
+              const myPId = currentUser?.patientProfile?.healthId || currentUser?.patientProfile?.id || currentUser?.id;
+              if (myPId) {
+                setSelectedPatientId(myPId);
+                const pRes = await getPatientByHealthId(myPId).catch(() => null);
+                if (mounted && pRes?.patient) {
+                  setPatient({
+                    ...pRes.patient,
+                    consultations: pRes.consultations || [],
+                    referrals: pRes.referrals || [],
+                  });
+                }
+              }
             }
           }
         }
@@ -1474,7 +1479,7 @@ export default function TeleconsultationRoom({
                         DR
                       </div>
                       <div className="text-xs text-gray-300 font-medium">
-                        {isPeerConnected ? doctorName : 'Connecting to Dr. rushi pansare…'}
+                        {isPeerConnected ? doctorName : `Connecting to ${doctorName}…`}
                       </div>
                       <div className="flex items-center justify-center gap-1 pt-1">
                         <span className="w-1.5 h-4 bg-emerald-400 rounded-full animate-bounce [animation-delay:100ms]" />
@@ -1802,7 +1807,7 @@ export default function TeleconsultationRoom({
                   <p className="text-[11px] text-gray-500 mt-0.5">
                     {isDoctor
                       ? 'Record diagnosis and medicines. Broadcasts live to patient and saves to PostgreSQL.'
-                      : 'Live digital prescription transmitted by Dr. rushi pansare.'}
+                      : `Live digital prescription transmitted by ${doctorName}.`}
                   </p>
                 </div>
 

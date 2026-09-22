@@ -46,6 +46,7 @@ interface Props {
   onDismissSOS?: (id: string) => void
   onAcknowledgeSOS?: (id: string) => void
   onDeclineSOS?: (id: string) => void
+  currentUser?: any
 }
 
 type DutyStatus = "available" | "busy" | "offline"
@@ -71,7 +72,7 @@ const STATUS_OPTIONS: {
   {
     value: "busy",
     label: "Busy",
-    sub: "In consultation — limited",
+    sub: "In consultation, SOS queued",
     dot: "bg-amber-500",
     bg: "bg-amber-50",
     text: "text-amber-800",
@@ -80,7 +81,7 @@ const STATUS_OPTIONS: {
   {
     value: "offline",
     label: "Off Duty",
-    sub: "Not available for SOS",
+    sub: "SOS routed to on-duty doctors",
     dot: "bg-gray-400",
     bg: "bg-gray-50",
     text: "text-gray-700",
@@ -94,6 +95,7 @@ export default function DoctorDashboard({
   onDismissSOS,
   onAcknowledgeSOS,
   onDeclineSOS,
+  currentUser,
 }: Props) {
   const [patients, setPatients] = useState<any[]>([]);
   const [referrals, setReferrals] = useState<any[]>([]);
@@ -106,9 +108,16 @@ export default function DoctorDashboard({
   const [statusPickerOpen, setStatusPickerOpen] = useState(false);
   const [isLive, setIsLive] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [dbUser, setDbUser] = useState<any>(null);
+  const [dbUser, setDbUser] = useState<any>(currentUser || null);
   const [stockModalOpen, setStockModalOpen] = useState(false);
   const [patientCallStatus, setPatientCallStatus] = useState<Record<string, 'available' | 'ringing' | 'active' | 'missed' | 'offline'>>({});
+  const [incomingPatientCall, setIncomingPatientCall] = useState<{
+    sessionId: string;
+    patientId: string;
+    patientName: string;
+    reason?: string;
+    priority?: string;
+  } | null>(null);
 
   const [dashboardStats, setDashboardStats] = useState<any>(null)
 
@@ -212,14 +221,32 @@ export default function DoctorDashboard({
     const ws = new WebSocket(getTeleconsultationWsUrl());
     ws.onerror = () => {};
 
+    ws.onopen = () => {
+      ws.send(JSON.stringify({
+        type: 'call:join',
+        role: 'doctor',
+        userId: currentUser?.id || dbUser?.id || doctorId || 'doc-1',
+        userName: dbUser?.fullName || currentUser?.fullName || 'Dr. Ankit Sharma',
+      }));
+    };
+
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'consultation:active' && data.patientId) {
+        if (data.type === 'consultation:patient_calling') {
+          setIncomingPatientCall({
+            sessionId: data.sessionId,
+            patientId: data.patientId,
+            patientName: data.patientName || 'Patient',
+            reason: data.reason,
+            priority: data.priority,
+          });
+        } else if (data.type === 'consultation:active' && data.patientId) {
           setPatientCallStatus((prev) => ({ ...prev, [data.patientId]: 'active' }));
         } else if (data.type === 'consultation:missed' && data.patientId) {
           setPatientCallStatus((prev) => ({ ...prev, [data.patientId]: 'missed' }));
         } else if (data.type === 'consultation:end' && data.sessionId) {
+          setIncomingPatientCall((prev) => (prev?.sessionId === data.sessionId ? null : prev));
           setPatientCallStatus((prev) => {
             const next = { ...prev };
             for (const k in next) {
@@ -238,7 +265,25 @@ export default function DoctorDashboard({
         ws.close();
       } catch {}
     };
-  }, []);
+  }, [currentUser, dbUser, doctorId]);
+
+  const handleAcceptIncomingPatientCall = () => {
+    if (!incomingPatientCall) return;
+    const { sessionId, patientId } = incomingPatientCall;
+    const ws = new WebSocket(getTeleconsultationWsUrl());
+    ws.onopen = () => {
+      ws.send(JSON.stringify({
+        type: 'consultation:doctor_accept',
+        sessionId,
+        doctorId: doctorId || dbUser?.doctorProfile?.id || dbUser?.id,
+        doctorName: dbUser?.doctorProfile?.name || dbUser?.fullName || 'Dr. Ankit Sharma',
+        patientId,
+      }));
+      setTimeout(() => ws.close(), 500);
+    };
+    setIncomingPatientCall(null);
+    navigate('teleconsultation', patientId, sessionId);
+  };
 
   useEffect(() => {
     setLoading(true)
@@ -440,7 +485,7 @@ export default function DoctorDashboard({
           sessionId,
           patientId: pId,
           doctorId: dbUser?.doctorProfile?.id || dbUser?.id || doctorId || 'doc-1',
-          doctorName: dbUser?.doctorProfile?.name || dbUser?.fullName || 'Dr. rushi pansare',
+          doctorName: dbUser?.doctorProfile?.name || dbUser?.fullName || 'Dr. Ankit Sharma',
           facilityName: dbUser?.doctorProfile?.facility?.name || 'PHC Lunkaransar Tele-Clinic',
           role: 'doctor',
         })
@@ -462,6 +507,44 @@ export default function DoctorDashboard({
 
   return (
     <div className="p-4 lg:p-6 space-y-6 max-w-7xl mx-auto">
+      {incomingPatientCall && (
+        <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-xl flex items-center justify-between gap-4 animate-pulse border-2 border-emerald-300">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center text-white">
+              <Icon name="phone" size={20} className="animate-bounce" />
+            </div>
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-emerald-200">
+                Incoming Patient Consultation Call
+              </div>
+              <div className="text-base font-extrabold text-white">
+                {incomingPatientCall.patientName}
+              </div>
+              <div className="text-xs text-emerald-100">
+                Reason: {incomingPatientCall.reason || 'Teleconsultation Request'} · {incomingPatientCall.priority || 'ROUTINE'}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleAcceptIncomingPatientCall}
+              className="px-4 py-2 bg-white text-emerald-800 font-bold rounded-xl text-xs hover:bg-emerald-50 transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
+            >
+              <Icon name="video" size={14} />
+              Accept Call
+            </button>
+            <button
+              type="button"
+              onClick={() => setIncomingPatientCall(null)}
+              className="px-3 py-2 bg-black/20 text-white font-semibold rounded-xl text-xs hover:bg-black/40 transition-colors cursor-pointer"
+            >
+              Decline
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-2 flex-wrap mb-1">

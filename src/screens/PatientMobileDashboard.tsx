@@ -163,9 +163,13 @@ export default function PatientMobileDashboard({
   // Form fields
   const [bookFacilityId, setBookFacilityId] = useState("");
   const [bookDoctorId, setBookDoctorId] = useState("");
-  const [bookDate, setBookDate] = useState(
-    () => new Date().toISOString().split("T")[0],
-  );
+  const [bookDate, setBookDate] = useState(() => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  });
   const [bookSlot, setBookSlot] = useState("09:00 AM - 09:30 AM");
   const [doctorSlots, setDoctorSlots] = useState<DoctorSlotItem[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
@@ -174,6 +178,8 @@ export default function PatientMobileDashboard({
     "ROUTINE",
   );
   const [bookError, setBookError] = useState<string | null>(null);
+  const [patientCallingState, setPatientCallingState] = useState<'idle' | 'calling' | 'connected'>('idle');
+  const [patientCallingMsg, setPatientCallingMsg] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true)
@@ -499,6 +505,63 @@ export default function PatientMobileDashboard({
     setActiveDoctorCall(null);
   };
 
+  const handleInitiatePatientCall = (reason = 'Patient Teleconsultation Request') => {
+    const healthId = pt?.healthId || dbUser?.patientProfile?.healthId || dbUser?.id || loginPhone;
+    if (!healthId) return;
+
+    setPatientCallingState('calling');
+    setPatientCallingMsg('Contacting on-duty medical officer...');
+
+    const ws = new WebSocket(getTeleconsultationWsUrl());
+    const sessionId = `consult-${Date.now()}`;
+
+    ws.onerror = () => {
+      setPatientCallingState('idle');
+      navigate('teleconsultation', healthId, sessionId);
+    };
+
+    ws.onopen = () => {
+      ws.send(
+        JSON.stringify({
+          type: 'consultation:patient_request',
+          sessionId,
+          patientId: healthId,
+          patientName: patientName,
+          reason,
+          priority: 'ROUTINE',
+        })
+      );
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'consultation:active' || data.type === 'consultation:accepted') {
+          setPatientCallingState('connected');
+          setPatientCallingMsg(`Connected with ${data.doctorName || 'Doctor'}!`);
+          if (data.doctorName) {
+            localStorage.setItem('last_calling_doctor', data.doctorName);
+          }
+          setTimeout(() => {
+            setPatientCallingState('idle');
+            navigate('teleconsultation', healthId, data.sessionId || sessionId);
+          }, 600);
+        }
+      } catch {}
+    };
+
+    // 15-second fallback: if doctor doesn't immediately answer, proceed to teleconsultation waiting room
+    setTimeout(() => {
+      setPatientCallingState((prev) => {
+        if (prev === 'calling') {
+          navigate('teleconsultation', healthId, sessionId);
+          return 'idle';
+        }
+        return prev;
+      });
+    }, 15000);
+  };
+
   useEffect(() => {
     const healthId = pt?.healthId || dbUser?.patientProfile?.healthId || dbUser?.id || loginPhone;
     if (!healthId) return;
@@ -652,6 +715,49 @@ export default function PatientMobileDashboard({
           <button onClick={() => setSosSent(false)}>
             <Icon name="x" size={13} className="text-gray-400" />
           </button>
+        </div>
+      )}
+
+      {patientCallingState === 'calling' && (
+        <div className="bg-gradient-to-r from-teal-900 via-emerald-900 to-teal-950 border-2 border-teal-400 rounded-3xl p-4 text-white shadow-2xl space-y-3 animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-teal-500"></span>
+              </span>
+              <span className="text-[11px] font-bold tracking-wider uppercase text-teal-200">
+                Calling Available Doctor
+              </span>
+            </div>
+            <span className="text-[10px] font-mono bg-white/10 px-2 py-0.5 rounded-md text-teal-200 border border-white/10">
+              Ringing Network
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3.5">
+            <div className="relative w-12 h-12 rounded-2xl bg-gradient-to-tr from-teal-500 to-emerald-600 flex items-center justify-center text-white shrink-0 shadow-lg">
+              <Icon name="phone" size={22} className="animate-bounce" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h4 className="font-bold text-base text-white truncate">
+                On-Duty Medical Officer
+              </h4>
+              <p className="text-xs text-teal-200 truncate">
+                {patientCallingMsg || 'Notifying duty doctors for instant teleconsultation...'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex justify-end pt-1">
+            <button
+              type="button"
+              onClick={() => setPatientCallingState('idle')}
+              className="py-2 px-4 bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+            >
+              Cancel Call
+            </button>
+          </div>
         </div>
       )}
 
@@ -988,16 +1094,18 @@ export default function PatientMobileDashboard({
                 },
               },
               {
-                label: 'Video Call',
+                label: activeDoctorCall ? 'Answer Call' : patientCallingState === 'calling' ? 'Calling...' : 'Call Doctor',
                 icon: 'video',
                 color: activeDoctorCall
                   ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-400 ring-2 ring-emerald-300 animate-pulse'
+                  : patientCallingState === 'calling'
+                  ? 'bg-amber-100 text-amber-800 border-2 border-amber-400 animate-pulse'
                   : 'bg-teal-50 text-teal-700',
                 action: () => {
                   if (activeDoctorCall) {
                     handleAcceptCall();
                   } else {
-                    navigate('teleconsultation', pt?.healthId || patientHealthId, undefined);
+                    handleInitiatePatientCall('Patient Video Consultation Request');
                   }
                 },
               },

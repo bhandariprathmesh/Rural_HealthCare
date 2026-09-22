@@ -1450,6 +1450,9 @@ export default function App() {
               navigate={
                 navigate
               }
+              currentUser={
+                currentUser
+              }
               sosAlerts={sosAlerts.filter(
                 (alert) =>
                   !alert.dismissed
@@ -1471,6 +1474,9 @@ export default function App() {
             <DoctorPatientView
               navigate={
                 navigate
+              }
+              currentUser={
+                currentUser
               }
               patientId={
                 selectedPatientId

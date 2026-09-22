@@ -328,15 +328,21 @@ export const CONSENT_ENTRIES: ConsentEntry[] = [
   },
 ];
 
-export const SYNC_RECORDS: SyncRecord[] = [
-  { id: 'SYN-001', type: 'Consultation', description: 'Priya Devi – Consultation 29 Aug', status: 'synced', recordedAt: '29 Aug 2026, 10:45 AM', syncedAt: '29 Aug 2026, 11:02 AM' },
-  { id: 'SYN-002', type: 'Patient Registration', description: 'New patient – Anita Meena', status: 'pending', recordedAt: '31 Aug 2026, 07:15 AM' },
-  { id: 'SYN-003', type: 'Referral', description: 'Ramesh Kumar – Emergency referral', status: 'pending', recordedAt: '31 Aug 2026, 09:48 AM' },
-  { id: 'SYN-004', type: 'Vitals', description: 'Mohan Lal – Vitals record', status: 'pending', recordedAt: '31 Aug 2026, 08:25 AM' },
-  { id: 'SYN-005', type: 'Consultation', description: 'Sunita Bai – Follow-up update', status: 'synced', recordedAt: '25 Aug 2026, 02:10 PM', syncedAt: '25 Aug 2026, 02:55 PM' },
-  { id: 'SYN-006', type: 'Referral', description: 'Mohan Lal – Emergency referral', status: 'failed', recordedAt: '31 Aug 2026, 08:32 AM', error: 'Connection timeout after 3 retries' },
-  { id: 'SYN-007', type: 'Vitals', description: 'Ramesh Kumar – Vitals record', status: 'pending', recordedAt: '31 Aug 2026, 09:41 AM' },
-];
+export const SYNC_RECORDS: SyncRecord[] = (() => {
+  const fmt = (d: Date) => d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true });
+  const today = new Date();
+  const daysAgo = (n: number, hh = 10, mm = 0) => { const d = new Date(today); d.setDate(d.getDate() - n); d.setHours(hh, mm, 0, 0); return d; };
+  return [
+    { id: 'SYN-001', type: 'Consultation', description: 'Priya Devi – Consultation', status: 'synced', recordedAt: fmt(daysAgo(3, 10, 45)), syncedAt: fmt(daysAgo(3, 11, 2)) },
+    { id: 'SYN-002', type: 'Patient Registration', description: 'New patient – Anita Meena', status: 'pending', recordedAt: fmt(daysAgo(1, 7, 15)) },
+    { id: 'SYN-003', type: 'Referral', description: 'Ramesh Kumar – Emergency referral', status: 'pending', recordedAt: fmt(daysAgo(1, 9, 48)) },
+    { id: 'SYN-004', type: 'Vitals', description: 'Mohan Lal – Vitals record', status: 'pending', recordedAt: fmt(daysAgo(1, 8, 25)) },
+    { id: 'SYN-005', type: 'Consultation', description: 'Sunita Bai – Follow-up update', status: 'synced', recordedAt: fmt(daysAgo(7, 14, 10)), syncedAt: fmt(daysAgo(7, 14, 55)) },
+    { id: 'SYN-006', type: 'Referral', description: 'Mohan Lal – Emergency referral', status: 'failed', recordedAt: fmt(daysAgo(1, 8, 32)), error: 'Connection timeout after 3 retries' },
+    { id: 'SYN-007', type: 'Vitals', description: 'Ramesh Kumar – Vitals record', status: 'pending', recordedAt: fmt(daysAgo(1, 9, 41)) },
+  ];
+})();
+
 
 export const ADMIN_STATS = {
   totalPatients: 3847,

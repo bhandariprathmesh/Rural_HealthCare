@@ -16,6 +16,7 @@ export default function SyncCenter({ navigate, isOffline }: Props) {
   const [syncedConsultations, setSyncedConsultations] = useState<OfflineConsultation[]>([]);
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [lastSyncTime, setLastSyncTime] = useState<string>(() => new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }));
 
   async function refreshOutbox() {
     try {
@@ -49,6 +50,7 @@ export default function SyncCenter({ navigate, isOffline }: Props) {
     try {
       const res = await syncEngine.flushOutbox();
       await refreshOutbox();
+      setLastSyncTime(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }));
       if (res.success && res.processed > 0) {
         setSyncSuccess(`Synchronized ${res.processed} record${res.processed > 1 ? 's' : ''} successfully!`);
         setTimeout(() => setSyncSuccess(null), 4000);
@@ -158,7 +160,7 @@ export default function SyncCenter({ navigate, isOffline }: Props) {
               {isOffline ? 'Offline — sync paused' : syncing ? 'Synchronizing...' : 'Sync Status: Healthy'}
             </div>
             <div className={`text-xs ${isOffline ? 'text-amber-600' : syncing ? 'text-blue-600' : 'text-green-600'}`}>
-              {isOffline ? 'Connect to internet to resume sync' : syncing ? 'Uploading pending records to server...' : 'Last sync: Today, 08:00 AM'}
+              {isOffline ? 'Connect to internet to resume sync' : syncing ? 'Uploading pending records to server...' : `Last sync: Today, ${lastSyncTime}`}
             </div>
           </div>
         </div>

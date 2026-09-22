@@ -74,7 +74,7 @@ export default function AdminDashboard({ navigate, isOffline }: Props) {
           </div>
 
           <p className="text-sm text-gray-500 mt-0.5">
-            {adminName} · District Health Officer, Bikaner · 31 Aug 2026
+            {adminName} · District Health Officer, Bikaner · {new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
           </p>
         </div>
 

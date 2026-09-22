@@ -68,19 +68,16 @@ export async function createSession(req: Request, res: Response, next: NextFunct
   try {
     const input = createSessionSchema.parse(req.body);
 
-    if (input.role === 'worker' || input.role === 'patient') {
-      throw new AppError('Only PHC Medical Officers (Doctors) are authorized to initiate teleconsultations.', 403);
-    }
-
     const cleanId = input.patientId ? input.patientId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12) : 'general';
     const sessionId = `tc-${cleanId}-${Date.now().toString(36)}`;
+    const isPatient = input.role === 'patient';
 
     if (input.patientId) {
       activeCalls.set(input.patientId, {
         sessionId,
         patientId: input.patientId,
-        doctorId: input.doctorId,
-        doctorName: (req as any).user?.fullName || 'Dr. rushi pansare',
+        doctorId: input.doctorId || 'doc-1',
+        doctorName: isPatient ? (input.doctorName || 'Dr. Ankit Sharma') : ((req as any).user?.fullName || 'Dr. Ankit Sharma'),
         facilityName: 'PHC Lunkaransar Tele-Clinic',
         status: 'WAITING',
         createdAt: Date.now(),

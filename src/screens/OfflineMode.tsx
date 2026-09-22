@@ -30,6 +30,7 @@ export default function OfflineMode({ navigate, isOffline, toggleOffline }: Prop
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
+  const [lastSyncTime, setLastSyncTime] = useState<string>(() => new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }));
 
   async function refreshOutbox() {
     try {
@@ -58,6 +59,7 @@ export default function OfflineMode({ navigate, isOffline, toggleOffline }: Prop
     try {
       const res = await syncEngine.flushOutbox();
       await refreshOutbox();
+      setLastSyncTime(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }));
       if (res.success && res.processed > 0) {
         setSyncSuccess(`Synchronized ${res.processed} record${res.processed > 1 ? 's' : ''} successfully!`);
         setTimeout(() => setSyncSuccess(null), 4000);
@@ -132,7 +134,7 @@ export default function OfflineMode({ navigate, isOffline, toggleOffline }: Prop
           </div>
           <div className="mt-2 text-xs text-amber-600 flex items-center gap-1">
             <Icon name="history" size={11} />
-            Last successful sync: Today, 08:00 AM
+            Last successful sync: Today, {lastSyncTime}
           </div>
         </div>
       ) : (
@@ -147,7 +149,7 @@ export default function OfflineMode({ navigate, isOffline, toggleOffline }: Prop
                   {pendingCount === 0 ? 'All records synchronized ✓' : `${pendingCount} records pending sync`}
                 </div>
                 <div className="text-xs text-green-600">
-                  {pendingCount === 0 ? 'Last sync: Today, 08:00 AM · Connected to server' : 'Connected to server · Ready to sync'}
+                  {pendingCount === 0 ? `Last sync: Today, ${lastSyncTime} · Connected to server` : 'Connected to server · Ready to sync'}
                 </div>
               </div>
             </div>
