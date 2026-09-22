@@ -114,3 +114,62 @@ export async function showOfflineGuidanceNotification(
     return false;
   }
 }
+
+/**
+ * Attaches Hardware and Sensor Listeners:
+ * 1. Double Volume-Button press (dispatched from Android native MainActivity.java)
+ * 2. Shake Detection (DeviceMotionEvent accelerometer threshold > 26 m/s²)
+ * 3. Keyboard Volume/F2 Double-Press Shortcut
+ */
+export function setupEmergencyHardwareTriggers(onTrigger: () => void): () => void {
+  let lastShakeTime = 0;
+  let lastKeyTime = 0;
+
+  // 1. Android Native Bridge Event (Hardware Volume Button Double Press)
+  const handleNativeHardwareTrigger = () => {
+    console.log('[NativeSOS] Hardware trigger received from Android system');
+    onTrigger();
+  };
+  window.addEventListener('emergency:hardware_trigger', handleNativeHardwareTrigger);
+
+  // 2. Shake-to-SOS (DeviceMotionEvent Accelerometer)
+  const handleDeviceMotion = (event: DeviceMotionEvent) => {
+    const acc = event.accelerationIncludingGravity;
+    if (!acc) return;
+    const { x, y, z } = acc;
+    if (x === null || y === null || z === null) return;
+    const speed = Math.sqrt(x * x + y * y + z * z);
+    const now = Date.now();
+    // Normal gravity is ~9.8 m/s^2. A rapid double shake spikes over 26 m/s^2
+    if (speed > 26 && now - lastShakeTime > 3000) {
+      lastShakeTime = now;
+      console.log('[NativeSOS] Rapid shake detected! Triggering Emergency SOS...');
+      onTrigger();
+    }
+  };
+
+  if (typeof window !== 'undefined' && 'DeviceMotionEvent' in window) {
+    try {
+      window.addEventListener('devicemotion', handleDeviceMotion);
+    } catch {}
+  }
+
+  // 3. Web Keyboard Volume/Emergency Key Shortcut (Press 'F2' or 'VolumeDown' twice rapidly)
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'F2' || e.code === 'AudioVolumeDown' || e.key === 'VolumeDown') {
+      const now = Date.now();
+      if (now - lastKeyTime < 800) {
+        console.log('[NativeSOS] Emergency key double-press detected! Triggering Emergency SOS...');
+        onTrigger();
+      }
+      lastKeyTime = now;
+    }
+  };
+  window.addEventListener('keydown', handleKeyDown);
+
+  return () => {
+    window.removeEventListener('emergency:hardware_trigger', handleNativeHardwareTrigger);
+    window.removeEventListener('devicemotion', handleDeviceMotion);
+    window.removeEventListener('keydown', handleKeyDown);
+  };
+}

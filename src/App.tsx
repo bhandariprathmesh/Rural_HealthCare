@@ -8,6 +8,7 @@ import {
   sendEmergencySmsFallback,
   broadcastBleEmergencyRelay,
   showOfflineGuidanceNotification,
+  setupEmergencyHardwareTriggers,
 } from './services/nativeSosDispatcher';
 
 import LoginScreen from './screens/LoginScreen';
@@ -698,6 +699,17 @@ export default function App() {
     const timer = setInterval(syncAlerts, 4000);
     return () => clearInterval(timer);
   }, [role, isOffline]);
+
+  // Hardware & Shake Emergency Trigger (Double Volume Button, Shake Phone, or F2 shortcut)
+  useEffect(() => {
+    const cleanup = setupEmergencyHardwareTriggers(() => {
+      const from = currentUser?.fullName || currentUser?.doctorProfile?.name || currentUser?.workerProfile?.name || currentUser?.patientProfile?.name || 'Emergency User';
+      const fromRole = currentUser?.role || (role !== 'login' ? role.toUpperCase() : 'PATIENT');
+      const pId = currentUser?.patientProfile?.healthId || currentUser?.id || 'RHC-EMERGENCY';
+      fireSOS(from, fromRole, pId);
+    });
+    return cleanup;
+  }, [currentUser, role, isOffline]);
 
   function fireSOS(
     from: string,
