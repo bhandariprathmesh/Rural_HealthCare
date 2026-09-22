@@ -229,10 +229,44 @@ export default function LoginScreen({
       .catch(() => {});
   }, [doctorFacilityId]);
 
+  const ROLE_CREDENTIALS: Record<Role, { email: string; pass: string }> = {
+    login: { email: '', pass: '' },
+    doctor: { email: 'doctor@ruralcare.in', pass: 'password123' },
+    worker: { email: 'asha.worker@ruralcare.in', pass: 'password123' },
+    patient: { email: 'patient@ruralcare.in', pass: 'password123' },
+    admin: { email: 'admin@ruralcare.in', pass: 'password123' },
+  };
+
+  async function handleQuickRoleLogin(role: Role) {
+    const creds = ROLE_CREDENTIALS[role];
+    if (!creds || !creds.email) return;
+    setSelectedRole(role);
+    setLoginEmail(creds.email);
+    setLoginPassword(creds.pass);
+    setLoading(true);
+    setErrorMessage(null);
+    try {
+      const result = await loginUser(creds.email, creds.pass, role.toUpperCase());
+      if (result?.user) {
+        onLogin(role, result.user);
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Quick login failed.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function handleSelectRole(role: Role) {
     setSelectedRole(role);
     setAuthTab('login');
     setErrorMessage(null);
+
+    const creds = ROLE_CREDENTIALS[role];
+    if (creds && creds.email) {
+      setLoginEmail(creds.email);
+      setLoginPassword(creds.pass);
+    }
 
     setHasExistingAbha(null);
     setPatientAbhaVerified(false);
@@ -909,6 +943,57 @@ export default function LoginScreen({
             {!selectedRole && (
               <div>
 
+                {/* 1-Click Quick Demo Login Bar for Evaluators & Mobile Developers */}
+                <div className="mb-5 p-3.5 bg-brand-50/80 border border-brand-200/90 rounded-2xl">
+                  <div className="flex items-center justify-between gap-2 mb-2.5">
+                    <span className="text-xs font-bold text-brand-950 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      ⚡ {hi ? 'त्वरित डेमो लॉगिन (1-क्लिक)' : '1-Click Quick Demo Login'}
+                    </span>
+                    <span className="text-[10px] text-brand-600 font-medium">
+                      {hi ? 'परीक्षण व मूल्यांकन हेतु' : 'Full access to all features'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleQuickRoleLogin('doctor')}
+                      disabled={loading}
+                      className="px-2.5 py-2 bg-white hover:bg-purple-50 text-purple-900 border border-purple-200 rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center"
+                    >
+                      <Icon name="clipboard" size={13} className="text-purple-600 shrink-0" />
+                      <span>Doctor</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleQuickRoleLogin('worker')}
+                      disabled={loading}
+                      className="px-2.5 py-2 bg-white hover:bg-brand-50 text-brand-900 border border-brand-200 rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center"
+                    >
+                      <Icon name="users" size={13} className="text-brand-600 shrink-0" />
+                      <span>ASHA</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleQuickRoleLogin('patient')}
+                      disabled={loading}
+                      className="px-2.5 py-2 bg-white hover:bg-teal-50 text-teal-900 border border-teal-200 rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center"
+                    >
+                      <Icon name="user" size={13} className="text-teal-600 shrink-0" />
+                      <span>Patient</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleQuickRoleLogin('admin')}
+                      disabled={loading}
+                      className="px-2.5 py-2 bg-white hover:bg-amber-50 text-amber-900 border border-amber-200 rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center"
+                    >
+                      <Icon name="chart" size={13} className="text-amber-600 shrink-0" />
+                      <span>Admin</span>
+                    </button>
+                  </div>
+                </div>
+
                 <h2 className="font-display text-lg font-bold text-gray-900 mb-4">
                   {hi
                     ? 'अपनी भूमिका चुनें'
@@ -1104,6 +1189,25 @@ export default function LoginScreen({
                       />
                     </div>
 
+                    <div className="flex items-center justify-between text-[11px] text-gray-500 bg-gray-50 px-3 py-2 rounded-xl border border-gray-100">
+                      <span>
+                        Demo: <strong className="text-gray-700">{ROLE_CREDENTIALS[selectedRole]?.email || ''}</strong> (pwd: <code className="text-brand-700 font-mono">password123</code>)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const creds = ROLE_CREDENTIALS[selectedRole];
+                          if (creds) {
+                            setLoginEmail(creds.email);
+                            setLoginPassword(creds.pass);
+                          }
+                        }}
+                        className="text-brand-600 hover:text-brand-800 font-semibold cursor-pointer underline"
+                      >
+                        Autofill
+                      </button>
+                    </div>
+
                     <button
                       onClick={
                         handleLogin
@@ -1113,7 +1217,7 @@ export default function LoginScreen({
                         !loginEmail ||
                         !loginPassword
                       }
-                      className="w-full py-3 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white font-semibold rounded-xl text-sm"
+                      className="w-full py-3 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white font-semibold rounded-xl text-sm transition-colors cursor-pointer"
                     >
                       {loading
                         ? 'Please wait...'

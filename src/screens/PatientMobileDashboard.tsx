@@ -19,6 +19,7 @@ import {
   getDoctors,
   getDoctorSlots,
   getActiveTeleconsultationCall,
+  getTeleconsultationWsUrl,
   type DoctorSlotItem,
 } from "../api/client";
 import { syncEngine } from "../services/syncEngine";
@@ -517,9 +518,8 @@ export default function PatientMobileDashboard({
     checkActiveCall();
     const interval = setInterval(checkActiveCall, 2500);
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname || 'localhost';
-    const ws = new WebSocket(`${protocol}//${host}:5000/teleconsultation`);
+    const ws = new WebSocket(getTeleconsultationWsUrl());
+    ws.onerror = () => {};
     wsRef.current = ws;
 
     ws.onmessage = (event) => {

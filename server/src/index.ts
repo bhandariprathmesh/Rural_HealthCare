@@ -60,7 +60,8 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(requestLogger);
 
-// System health check
+// System health check (supports both /health and /api/health for cloud monitors)
+app.use('/health', healthRoutes);
 app.use('/api/health', healthRoutes);
 
 // API v1 routes

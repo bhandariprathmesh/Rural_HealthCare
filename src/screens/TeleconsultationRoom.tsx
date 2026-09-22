@@ -5,6 +5,7 @@ import {
   getPatients,
   saveTeleconsultationRecord,
   getCurrentUser,
+  getTeleconsultationWsUrl,
 } from '../api/client';
 
 interface Props {
@@ -614,12 +615,8 @@ export default function TeleconsultationRoom({
       }
     };
 
-    // Connect WebSocket
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname || 'localhost';
-    const wsUrl = `${protocol}//${host}:5000/teleconsultation`;
-
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(getTeleconsultationWsUrl());
+    ws.onerror = () => {};
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -960,9 +957,8 @@ export default function TeleconsultationRoom({
         })
       );
     } else {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.hostname || 'localhost';
-      const tempWs = new WebSocket(`${protocol}//${host}:5000/teleconsultation`);
+      const tempWs = new WebSocket(getTeleconsultationWsUrl());
+      tempWs.onerror = () => {};
       tempWs.onopen = () => {
         tempWs.send(JSON.stringify(payload));
         setTimeout(() => tempWs.close(), 800);

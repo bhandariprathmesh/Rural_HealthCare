@@ -20,6 +20,7 @@ import {
   getDoctorAppointments,
   updateAppointmentStatus,
   updateDoctorSlotCapacity,
+  getTeleconsultationWsUrl,
 } from "../api/client";
 import PhcStockCheckerModal from "../components/PhcStockCheckerModal";
 
@@ -208,9 +209,8 @@ export default function DoctorDashboard({
   }, [opdAppointments, slotCapacity])
 
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname || 'localhost';
-    const ws = new WebSocket(`${protocol}//${host}:5000/teleconsultation`);
+    const ws = new WebSocket(getTeleconsultationWsUrl());
+    ws.onerror = () => {};
 
     ws.onmessage = (event) => {
       try {
@@ -430,9 +430,8 @@ export default function DoctorDashboard({
 
     setPatientCallStatus((prev) => ({ ...prev, [pId]: 'ringing' }));
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname || 'localhost';
-    const ws = new WebSocket(`${protocol}//${host}:5000/teleconsultation`);
+    const ws = new WebSocket(getTeleconsultationWsUrl());
+    ws.onerror = () => {};
 
     ws.onopen = () => {
       ws.send(

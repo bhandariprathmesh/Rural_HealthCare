@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Role } from './types';
 import { Icon, OfflineIndicator, ErrorBoundary } from './components/shared';
-import { getCurrentUser, getToken, clearToken, dispatchSosAlert, getActiveSosAlerts, acceptSosAlert, declineSosAlert, getActiveTeleconsultationCall } from './api/client';
+import { getCurrentUser, getToken, clearToken, dispatchSosAlert, getActiveSosAlerts, acceptSosAlert, declineSosAlert, getActiveTeleconsultationCall, getTeleconsultationWsUrl } from './api/client';
 import { syncEngine } from './services/syncEngine';
 
 import LoginScreen from './screens/LoginScreen';
@@ -499,9 +499,8 @@ export default function App() {
     checkCall();
     const interval = setInterval(checkCall, 2500);
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname || 'localhost';
-    const ws = new WebSocket(`${protocol}//${host}:5000/teleconsultation`);
+    const ws = new WebSocket(getTeleconsultationWsUrl());
+    ws.onerror = () => {};
 
     ws.onmessage = (event) => {
       try {
@@ -1585,9 +1584,8 @@ export default function App() {
                 type="button"
                 onClick={() => {
                   try {
-                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                    const host = window.location.hostname || 'localhost';
-                    const ws = new WebSocket(`${protocol}//${host}:5000/teleconsultation`);
+                    const ws = new WebSocket(getTeleconsultationWsUrl());
+                    ws.onerror = () => {};
                     ws.onopen = () => {
                       ws.send(JSON.stringify({
                         type: 'consultation:reject',
@@ -1614,9 +1612,8 @@ export default function App() {
                     localStorage.setItem('last_calling_doctor', incomingCall.doctorName);
                   }
                   try {
-                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                    const host = window.location.hostname || 'localhost';
-                    const ws = new WebSocket(`${protocol}//${host}:5000/teleconsultation`);
+                    const ws = new WebSocket(getTeleconsultationWsUrl());
+                    ws.onerror = () => {};
                     ws.onopen = () => {
                       ws.send(JSON.stringify({
                         type: 'consultation:accept',
