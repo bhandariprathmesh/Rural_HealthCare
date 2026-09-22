@@ -235,7 +235,7 @@ export default function DoctorDashboard({
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'consultation:patient_calling') {
+        if (data.type === 'consultation:patient_calling' || data.type === 'consultation:incoming_from_patient') {
           setIncomingPatientCall({
             sessionId: data.sessionId,
             patientId: data.patientId,

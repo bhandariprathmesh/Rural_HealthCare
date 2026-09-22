@@ -385,6 +385,15 @@ export default function App() {
     facilityName?: string;
   } | null>(null);
 
+  // Incoming Video Call Notification for Doctors (Patient-initiated consultation)
+  const [incomingDoctorCall, setIncomingDoctorCall] = useState<{
+    sessionId: string;
+    patientId: string;
+    patientName: string;
+    reason?: string;
+    priority?: string;
+  } | null>(null);
+
   useEffect(() => {
     if (role !== 'patient' || screen === 'teleconsultation') return;
     const healthId = currentUser?.patientProfile?.healthId || currentUser?.id;
@@ -465,6 +474,41 @@ export default function App() {
       } catch {}
     };
   }, [role, currentUser, screen]);
+
+  // Doctor Incoming Call WebSocket Listener
+  useEffect(() => {
+    if (role !== 'doctor' || screen === 'teleconsultation') return;
+
+    const ws = new WebSocket(getTeleconsultationWsUrl());
+    ws.onerror = () => {};
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'consultation:incoming_from_patient' || data.type === 'consultation:patient_calling') {
+          setIncomingDoctorCall({
+            sessionId: data.sessionId,
+            patientId: data.patientId,
+            patientName: data.patientName || 'Patient',
+            reason: data.reason || 'Patient Video Consultation Request',
+            priority: data.priority || 'ROUTINE',
+          });
+        } else if (
+          data.type === 'call:end' ||
+          data.type === 'consultation:end' ||
+          data.type === 'consultation:missed'
+        ) {
+          setIncomingDoctorCall((prev) => (prev?.sessionId === data.sessionId ? null : prev));
+        }
+      } catch {}
+    };
+
+    return () => {
+      try {
+        ws.close();
+      } catch {}
+    };
+  }, [role, screen]);
 
   // Cross-device single-session concurrency & real-time eviction listener
   useEffect(() => {
@@ -1689,6 +1733,92 @@ export default function App() {
                     };
                   } catch {}
                   setIncomingCall(null);
+                  setSelectedPatientId(pId);
+                  setTeleconsultRoomId(sId);
+                  setScreen('teleconsultation');
+                }}
+                className="py-3 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-2xl text-xs font-bold shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 animate-pulse"
+              >
+                <Icon name="video" size={16} />
+                Accept Call
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global Doctor Incoming Consultation Call Modal (Patient-initiated) */}
+      {role === 'doctor' && incomingDoctorCall && screen !== 'teleconsultation' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fade-in">
+          <div className="bg-slate-900 border-2 border-emerald-500/80 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl animate-scale-up text-white">
+            <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full bg-emerald-500/30 animate-ping" />
+              <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white shadow-lg">
+                <Icon name="video" size={32} className="animate-bounce" />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-500/20 text-emerald-300 rounded-full text-xs font-bold uppercase tracking-wider border border-emerald-500/30">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                Incoming Patient Call
+              </div>
+              <h3 className="font-display text-xl font-bold text-white">
+                {incomingDoctorCall.patientName}
+              </h3>
+              <p className="text-xs text-gray-300">
+                Health ID: <span className="font-mono text-emerald-300 font-semibold">{incomingDoctorCall.patientId}</span>
+              </p>
+              <p className="text-[11px] text-gray-400 italic">
+                "{incomingDoctorCall.reason || 'Patient requested live teleconsultation'}"
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    const ws = new WebSocket(getTeleconsultationWsUrl());
+                    ws.onerror = () => {};
+                    ws.onopen = () => {
+                      ws.send(JSON.stringify({
+                        type: 'consultation:reject',
+                        sessionId: incomingDoctorCall.sessionId,
+                        role: 'doctor',
+                      }));
+                      ws.close();
+                    };
+                  } catch {}
+                  setIncomingDoctorCall(null);
+                }}
+                className="py-3 px-4 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-2xl text-xs font-bold border border-gray-700 transition-colors cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Icon name="phone_off" size={14} />
+                Decline
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const pId = incomingDoctorCall.patientId;
+                  const sId = incomingDoctorCall.sessionId;
+                  try {
+                    const ws = new WebSocket(getTeleconsultationWsUrl());
+                    ws.onerror = () => {};
+                    ws.onopen = () => {
+                      ws.send(JSON.stringify({
+                        type: 'consultation:doctor_accept',
+                        sessionId: sId,
+                        doctorId: currentUser?.doctorProfile?.id || currentUser?.id,
+                        doctorName: currentUser?.doctorProfile?.name || currentUser?.fullName || 'Dr. Ankit Sharma (PHC Medical Officer)',
+                        patientId: pId,
+                        role: 'doctor',
+                      }));
+                      ws.close();
+                    };
+                  } catch {}
+                  setIncomingDoctorCall(null);
                   setSelectedPatientId(pId);
                   setTeleconsultRoomId(sId);
                   setScreen('teleconsultation');

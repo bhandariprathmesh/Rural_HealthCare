@@ -181,7 +181,7 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
 
         switch (type) {
           // =========================================================================
-          // 1. DOCTOR STARTS CONSULTATION (Strictly Doctor Role Only)
+          // 1. START CONSULTATION (Doctor or Patient Initiated)
           // =========================================================================
           case 'consultation:start': {
             const role = (message.role || currentPeer?.role || '').toLowerCase();
@@ -190,16 +190,44 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
             const targetPatientId = message.patientId;
             const facilityName = message.facilityName || 'PHC Lunkaransar Tele-Clinic';
 
-            // Backend Rule: ONLY Doctor can initiate consultation
-            if (role !== 'doctor' && role !== 'phc_staff') {
-              console.warn(`[Teleconsultation WS] Blocked non-doctor from starting consultation: ${role}`);
-              ws.send(
-                JSON.stringify({
-                  type: 'error',
-                  code: 'ROLE_NOT_AUTHORIZED',
-                  message: 'Forbidden: Only doctors are authorized to initiate teleconsultation sessions.',
-                })
-              );
+            // If patient initiates via consultation:start, handle as patient request to doctors
+            if (role === 'patient') {
+              const patientName = message.patientName || currentPeer?.userName || 'Patient';
+              const pId = targetPatientId || currentPeer?.userId || 'patient-1';
+              const sessionInfo: ActiveCallInfo = {
+                sessionId,
+                patientId: pId,
+                doctorId,
+                doctorName,
+                facilityName,
+                status: 'RINGING',
+                createdAt: Date.now(),
+              };
+
+              sessionsBySessionId.set(sessionId, sessionInfo);
+              activeCalls.set(pId, sessionInfo);
+
+              const patientCallingPayload = {
+                type: 'consultation:incoming_from_patient',
+                sessionId,
+                patientId: pId,
+                patientName,
+                doctorId,
+                doctorName,
+                facilityName,
+                reason: message.reason || 'Patient Requested Video Consultation',
+                priority: message.priority || 'ROUTINE',
+                status: 'RINGING',
+              };
+
+              broadcastAll(patientCallingPayload);
+              broadcastAll({ ...patientCallingPayload, type: 'consultation:patient_calling' });
+
+              ws.send(JSON.stringify({
+                type: 'consultation:request_sent',
+                sessionId,
+                status: 'RINGING',
+              }));
               return;
             }
 
@@ -364,25 +392,24 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
           // 2.1 PATIENT INITIATES CONSULTATION REQUEST TO ON-DUTY DOCTOR
           // =========================================================================
           case 'consultation:patient_request': {
-            const { patientId, patientName, doctorId, doctorName, facilityName, reason } = message;
+            const { patientId, patientName, doctorId, doctorName, facilityName, reason, priority } = message;
             const targetDocId = doctorId || 'doc-1';
             console.log(`[Teleconsultation WS] Patient ${patientName || patientId} initiated call to Doctor: ${targetDocId}`);
 
-            const sessionInfo: ActiveSessionInfo = {
+            const sessionInfo: ActiveCallInfo = {
               sessionId,
               patientId,
               doctorId: targetDocId,
-              doctorName: doctorName || 'Dr. Ankit Sharma',
-              facilityName: facilityName || 'PHC Lunkaransar',
-              startedAt: Date.now(),
+              doctorName: doctorName || 'Dr. Ankit Sharma (PHC Medical Officer)',
+              facilityName: facilityName || 'PHC Lunkaransar Tele-Clinic',
+              createdAt: Date.now(),
               status: 'RINGING',
             };
 
             sessionsBySessionId.set(sessionId, sessionInfo);
             activeCalls.set(patientId, sessionInfo);
 
-            // Broadcast incoming call notification to doctor dashboards
-            broadcastAll({
+            const payload = {
               type: 'consultation:incoming_from_patient',
               sessionId,
               patientId,
@@ -391,8 +418,13 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
               doctorName: sessionInfo.doctorName,
               facilityName: sessionInfo.facilityName,
               reason: reason || 'Patient Requested Video Consultation',
+              priority: priority || 'ROUTINE',
               status: 'RINGING',
-            });
+            };
+
+            // Broadcast both event names to ensure all client components receive it
+            broadcastAll(payload);
+            broadcastAll({ ...payload, type: 'consultation:patient_calling' });
 
             ws.send(
               JSON.stringify({
@@ -410,16 +442,39 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
           case 'consultation:doctor_accept': {
             const session = sessionsBySessionId.get(sessionId);
             if (session) {
+              if (session.timeoutTimer) {
+                clearTimeout(session.timeoutTimer);
+                session.timeoutTimer = undefined;
+              }
               session.status = 'ACTIVE';
-              broadcastAll({
+              const activePayload = {
                 type: 'consultation:active',
                 sessionId,
                 patientId: session.patientId,
-                doctorId: session.doctorId,
-                doctorName: session.doctorName,
+                doctorId: message.doctorId || session.doctorId,
+                doctorName: message.doctorName || session.doctorName || 'Dr. Ankit Sharma (PHC Medical Officer)',
                 facilityName: session.facilityName,
                 status: 'ACTIVE',
-              });
+              };
+
+              broadcastAll(activePayload);
+              broadcastAll({ ...activePayload, type: 'consultation:accepted' });
+
+              // If room has peers, notify room to start WebRTC negotiation
+              const room = rooms.get(sessionId);
+              if (room && room.size >= 2) {
+                for (const peer of room) {
+                  if (peer.ws.readyState === WebSocket.OPEN) {
+                    peer.ws.send(
+                      JSON.stringify({
+                        type: 'call:start',
+                        sessionId,
+                        peerCount: room.size,
+                      })
+                    );
+                  }
+                }
+              }
             }
             break;
           }

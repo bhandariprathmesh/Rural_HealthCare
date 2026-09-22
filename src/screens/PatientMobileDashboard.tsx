@@ -1746,19 +1746,19 @@ export default function PatientMobileDashboard({
               </span>
             </div>
 
-            <div className="p-3 bg-gradient-to-r from-teal-50 to-emerald-50 border border-teal-100/80 rounded-2xl flex items-center justify-between gap-3">
+            <div className="p-3 bg-gradient-to-r from-teal-50 to-emerald-50 border border-teal-100/80 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="text-xs text-teal-900 leading-snug">
                 {activeDoctorCall ? (
                   <span>
                     🚨 <strong className="text-emerald-800">{activeDoctorCall.doctorName}</strong> is calling you!
                   </span>
                 ) : (
-                  <span className="flex items-center gap-2 text-gray-600">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-teal-500"></span>
+                  <span className="flex items-center gap-2 text-teal-900 font-medium">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
                     </span>
-                    <span>👉 Waiting for doctor to start consultation…</span>
+                    <span>Medical Officers On-Duty. Tap to call directly:</span>
                   </span>
                 )}
               </div>
@@ -1766,15 +1766,20 @@ export default function PatientMobileDashboard({
                 <button
                   type="button"
                   onClick={handleAcceptCall}
-                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shrink-0 shadow-xs flex items-center gap-1.5 animate-bounce"
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shrink-0 shadow-xs flex items-center justify-center gap-1.5 animate-bounce"
                 >
                   <Icon name="video" size={13} />
-                  <span>✅ Accept</span>
+                  <span>✅ Accept Doctor Call</span>
                 </button>
               ) : (
-                <div className="text-[10px] font-mono text-gray-400">
-                  Auto-receives
-                </div>
+                <button
+                  type="button"
+                  onClick={() => handleInitiatePatientCall('Rural citizen direct teleconsultation call')}
+                  className="px-4 py-2 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shrink-0 shadow-md flex items-center justify-center gap-1.5 active:scale-95"
+                >
+                  <Icon name="video" size={14} />
+                  <span>📹 Call Doctor Now</span>
+                </button>
               )}
             </div>
           </div>

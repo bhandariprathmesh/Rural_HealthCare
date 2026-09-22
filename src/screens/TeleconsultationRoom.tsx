@@ -50,10 +50,12 @@ const COMMON_DRUGS = [
 
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
+    { urls: ['stun:stun.cloudflare.com:3478'] },
+    { urls: ['stun:global.stun.twilio.com:3478'] },
+    { urls: ['stun:stun.services.mozilla.com'] },
   ],
+  iceCandidatePoolSize: 10,
 };
 
 /**
@@ -260,11 +262,13 @@ export default function TeleconsultationRoom({
   // Media Stream & Socket References
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const iceCandidatesQueue = useRef<RTCIceCandidateInit[]>([]);
+  const [audioBlocked, setAudioBlocked] = useState(false);
 
   // In-Call Consultation & Prescription Form (All fields strictly empty initially for all patients)
   const [diagnosis, setDiagnosis] = useState('');
@@ -308,7 +312,7 @@ export default function TeleconsultationRoom({
   patientNameRef.current = patientName;
 
   // --------------------------------------------------------------------------
-  // 1. Local Video Element Attachment (Guaranteed Callback Ref)
+  // 1. Local Video & Audio Element Attachment (Guaranteed Callback Refs)
   // --------------------------------------------------------------------------
   const attachLocalStream = useCallback((videoElement: HTMLVideoElement | null) => {
     localVideoRef.current = videoElement;
@@ -327,7 +331,22 @@ export default function TeleconsultationRoom({
       if (videoElement.srcObject !== remoteStreamRef.current) {
         videoElement.srcObject = remoteStreamRef.current;
       }
-      videoElement.play().catch((err) => console.log('Remote video play note:', err));
+      videoElement.play().catch((err) => {
+        console.log('Remote video play note:', err);
+      });
+    }
+  }, []);
+
+  const attachRemoteAudio = useCallback((audioElement: HTMLAudioElement | null) => {
+    remoteAudioRef.current = audioElement;
+    if (audioElement && remoteStreamRef.current) {
+      if (audioElement.srcObject !== remoteStreamRef.current) {
+        audioElement.srcObject = remoteStreamRef.current;
+      }
+      audioElement.play().catch((err) => {
+        console.log('Remote audio autoplay blocked by browser policy:', err);
+        setAudioBlocked(true);
+      });
     }
   }, []);
 
@@ -349,16 +368,24 @@ export default function TeleconsultationRoom({
       }
       remoteVideoRef.current.play().catch(() => {});
     }
+    if (remoteAudioRef.current && remoteStreamRef.current) {
+      if (remoteAudioRef.current.srcObject !== remoteStreamRef.current) {
+        remoteAudioRef.current.srcObject = remoteStreamRef.current;
+      }
+      remoteAudioRef.current.play().catch(() => {
+        setAudioBlocked(true);
+      });
+    }
   }, [remoteStreamActive, loading]);
 
   // --------------------------------------------------------------------------
-  // 2. Local Media Acquisition (Webcam with Simulated Fallback)
+  // 2. Local Media Acquisition (Webcam + Real Microphone with Fallback)
   // --------------------------------------------------------------------------
   const initLocalCamera = useCallback(async () => {
     setCameraStatus('loading');
     let stream: MediaStream | null = null;
 
-    // Attempt 1: Standard Real Webcam
+    // Attempt 1: Standard Real Webcam + Microphone
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -381,12 +408,33 @@ export default function TeleconsultationRoom({
         stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         setCameraStatus('active');
       } catch (err2: any) {
-        console.warn('Hardware camera unavailable, in use by another tab, or denied:', err2?.message);
-        // Fallback: Generate real animated canvas stream so video tile is NEVER pitch black
+        console.warn('Hardware camera unavailable or denied:', err2?.message);
         const label = isDoctor ? doctorNameRef.current : patientNameRef.current;
         const role = isDoctor ? 'PHC Medical Officer' : 'Patient / ASHA Assisted';
         stream = createSimulatedMediaStream(label, role);
         setCameraStatus('fallback');
+      }
+    }
+
+    // Always attempt to attach real microphone if not already present in stream
+    if (stream && stream.getAudioTracks().length === 0) {
+      try {
+        const audioOnly = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
+        const realAudio = audioOnly.getAudioTracks()[0];
+        if (realAudio) {
+          // Replace any synthetic audio track with real mic track
+          stream.getAudioTracks().forEach((t) => stream!.removeTrack(t));
+          stream.addTrack(realAudio);
+        }
+      } catch (micErr) {
+        console.warn('Real microphone unavailable:', micErr);
       }
     }
 
@@ -593,16 +641,33 @@ export default function TeleconsultationRoom({
     }
 
     pc.ontrack = (event) => {
-      const [stream] = event.streams;
-      if (stream) {
-        remoteStreamRef.current = stream;
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = stream;
-          remoteVideoRef.current.play().catch(() => {});
+      let stream = event.streams[0];
+      if (!stream) {
+        if (!remoteStreamRef.current) {
+          remoteStreamRef.current = new MediaStream();
         }
-        setRemoteStreamActive(true);
-        setIsPeerConnected(true);
+        remoteStreamRef.current.addTrack(event.track);
+        stream = remoteStreamRef.current;
+      } else {
+        remoteStreamRef.current = stream;
       }
+      if (remoteVideoRef.current) {
+        if (remoteVideoRef.current.srcObject !== stream) {
+          remoteVideoRef.current.srcObject = stream;
+        }
+        remoteVideoRef.current.play().catch(() => {});
+      }
+      if (remoteAudioRef.current) {
+        if (remoteAudioRef.current.srcObject !== stream) {
+          remoteAudioRef.current.srcObject = stream;
+        }
+        remoteAudioRef.current.play().catch((err) => {
+          console.log('Audio autoplay blocked by browser policy:', err);
+          setAudioBlocked(true);
+        });
+      }
+      setRemoteStreamActive(true);
+      setIsPeerConnected(true);
     };
 
     pc.onicecandidate = (event) => {
@@ -700,7 +765,19 @@ export default function TeleconsultationRoom({
 
           case 'call:start': {
             setPeerCount(data.peerCount || 2);
-            // Only Doctor creates the initial WebRTC SDP offer
+            // Ensure local tracks are attached before creating offer
+            if (mediaStreamRef.current) {
+              const senders = pc.getSenders();
+              mediaStreamRef.current.getTracks().forEach((track) => {
+                if (!senders.some((s) => s.track?.id === track.id)) {
+                  try {
+                    pc.addTrack(track, mediaStreamRef.current!);
+                  } catch (e) {}
+                }
+              });
+            }
+
+            // Doctor creates offer (or caller peer)
             if (isDoctor && pc.signalingState === 'stable') {
               try {
                 const offer = await pc.createOffer({
@@ -724,8 +801,20 @@ export default function TeleconsultationRoom({
           }
 
           case 'webrtc:offer': {
-            if (!isDoctor && pc.signalingState !== 'closed') {
+            if (pc.signalingState !== 'closed') {
               try {
+                // Ensure local tracks are attached before creating answer
+                if (mediaStreamRef.current) {
+                  const senders = pc.getSenders();
+                  mediaStreamRef.current.getTracks().forEach((track) => {
+                    if (!senders.some((s) => s.track?.id === track.id)) {
+                      try {
+                        pc.addTrack(track, mediaStreamRef.current!);
+                      } catch (e) {}
+                    }
+                  });
+                }
+
                 await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
 
                 while (iceCandidatesQueue.current.length > 0) {
@@ -740,7 +829,7 @@ export default function TeleconsultationRoom({
                     type: 'webrtc:answer',
                     sessionId,
                     sdp: answer,
-                    senderRole: 'patient',
+                    senderRole: isDoctor ? 'doctor' : 'patient',
                   })
                 );
               } catch (e) {
@@ -1078,8 +1167,8 @@ export default function TeleconsultationRoom({
     );
   }
 
-  // Entry Guard: Patient can only enter after doctor initiates and session is ACTIVE (or joining valid doctor session)
-  if (!sessionId || (!isDoctor && !roomId && sessionStatus !== 'ACTIVE')) {
+  // Entry Guard: Patient can directly ring on-duty doctors or enter when session is ACTIVE or RINGING
+  if (!sessionId || (!isDoctor && !roomId && sessionStatus !== 'ACTIVE' && sessionStatus !== 'RINGING')) {
     return (
       <div className="min-h-[70vh] flex items-center justify-center p-4">
         <div className="bg-white rounded-3xl border border-gray-200 p-8 max-w-md w-full text-center space-y-5 shadow-lg">
@@ -1092,20 +1181,44 @@ export default function TeleconsultationRoom({
 
           <div className="space-y-2">
             <h3 className="font-display text-xl font-bold text-gray-900">
-              Waiting for doctor…
+              Virtual PHC Clinic
             </h3>
             <p className="text-xs text-gray-500 leading-relaxed">
-              Only the duty doctor can initiate teleconsultation sessions. As soon as the doctor starts your session, you will be alerted immediately.
+              Connect directly with active PHC Medical Officers for confidential 1-to-1 video teleconsultation.
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => navigate('patient-dashboard')}
-            className="w-full py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-2xl text-xs transition-colors cursor-pointer"
-          >
-            ← Back to Patient Dashboard
-          </button>
+          <div className="space-y-2.5">
+            <button
+              type="button"
+              onClick={() => {
+                setSessionStatus('RINGING');
+                const pId = patient?.healthId || patient?.id || selectedPatientId || currentUser?.patientProfile?.healthId || currentUser?.id || 'PT-1';
+                wsRef.current?.send(
+                  JSON.stringify({
+                    type: 'consultation:patient_request',
+                    sessionId,
+                    patientId: pId,
+                    patientName: patientNameRef.current,
+                    reason: 'Rural citizen live video teleconsultation',
+                    priority: 'ROUTINE',
+                  })
+                );
+              }}
+              className="w-full py-3.5 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white font-extrabold rounded-2xl text-xs flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer active:scale-95"
+            >
+              <Icon name="video" size={16} />
+              <span>📹 Call On-Duty Doctor Now</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate('patient-dashboard')}
+              className="w-full py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-2xl text-xs transition-colors cursor-pointer"
+            >
+              ← Back to Patient Dashboard
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -1628,6 +1741,31 @@ export default function TeleconsultationRoom({
               </div>
             </div>
           </div>
+
+          {/* Dedicated WebRTC Audio Channel Element (Auto-played with browser audio unlock) */}
+          <audio ref={attachRemoteAudio} autoPlay playsInline style={{ display: 'none' }} />
+
+          {/* Audio Autoplay Unblock Notification (if browser blocks audio without click) */}
+          {audioBlocked && (
+            <div className="p-3 bg-teal-500 text-white rounded-2xl flex items-center justify-between text-xs gap-3 shadow-lg animate-bounce">
+              <div className="flex items-center gap-2">
+                <Icon name="volume" size={16} className="text-white shrink-0" />
+                <span className="font-semibold">
+                  Audio playback paused by device policy. Tap to hear remote participant clearly.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  remoteAudioRef.current?.play().then(() => setAudioBlocked(false)).catch(() => {});
+                  remoteVideoRef.current?.play().catch(() => {});
+                }}
+                className="px-3 py-1.5 bg-white text-teal-900 rounded-xl font-bold text-xs shrink-0 cursor-pointer shadow-sm active:scale-95"
+              >
+                🔊 Enable Audio
+              </button>
+            </div>
+          )}
 
           {/* Call Controls Bar */}
           <div className="bg-white rounded-3xl p-3 sm:p-4 shadow-sm border border-gray-100 flex items-center justify-between flex-wrap gap-3">
