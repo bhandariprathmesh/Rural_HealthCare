@@ -1,0 +1,13 @@
+{
+  "appId": "com.ruralcare.health",
+  "appName": "RuralCare",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}
