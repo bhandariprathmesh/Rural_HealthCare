@@ -44,23 +44,23 @@
   ],
   "featureCount": 34,
   "metrics": {
-    "accuracy": 0.9908333333333333,
-    "macroPrecision": 0.993611539275244,
-    "weightedPrecision": 0.9908391387352535,
-    "macroRecall": 0.9938203295152053,
-    "weightedRecall": 0.9908333333333333,
-    "macroF1": 0.9937152676727782,
-    "weightedF1": 0.9908352965903998,
+    "accuracy": 0.9916666666666667,
+    "macroPrecision": 0.9938938297658527,
+    "weightedPrecision": 0.9917106990922187,
+    "macroRecall": 0.9947152032749859,
+    "weightedRecall": 0.9916666666666667,
+    "macroF1": 0.994293874880467,
+    "weightedF1": 0.9916736708775814,
     "confusionMatrix": [
       [
-        363,
-        5,
+        365,
+        3,
         0,
         0
       ],
       [
-        6,
-        533,
+        7,
+        532,
         0,
         0
       ],

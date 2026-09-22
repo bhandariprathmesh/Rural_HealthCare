@@ -168,9 +168,20 @@ def main():
             confusion_matrix,
             classification_report,
         )
-    except ImportError as e:
-        print(f"Error importing ML dependencies: {e}")
-        sys.exit(1)
+    except ImportError:
+        print("[!] Missing ML dependencies. Automatically installing xgboost, scikit-learn, numpy...")
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "xgboost", "scikit-learn", "numpy"])
+        import xgboost as xgb
+        from sklearn.model_selection import train_test_split, StratifiedKFold
+        from sklearn.metrics import (
+            accuracy_score,
+            precision_score,
+            recall_score,
+            f1_score,
+            confusion_matrix,
+            classification_report,
+        )
 
     print("===================================================================")
     print("   RURALCARE XGBOOST CLINICAL RISK STRATIFICATION MODEL TRAINER    ")
