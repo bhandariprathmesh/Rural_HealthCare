@@ -514,8 +514,10 @@ export default function PatientMobileDashboard({
     setPatientCallingState('calling');
     setPatientCallingMsg('Contacting on-duty medical officer...');
 
+    const cleanId = String(healthId).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    const sessionId = `room-${cleanId}`;
+
     const ws = new WebSocket(getTeleconsultationWsUrl());
-    const sessionId = `consult-${Date.now()}`;
 
     ws.onerror = () => {
       setPatientCallingState('idle');
@@ -983,7 +985,8 @@ export default function PatientMobileDashboard({
             if (activeDoctorCall) {
               handleAcceptCall();
             } else {
-              navigate('teleconsultation', pt?.healthId || patientHealthId, undefined);
+              const cleanId = String(pt?.healthId || patientHealthId).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+              navigate('teleconsultation', pt?.healthId || patientHealthId, `room-${cleanId}`);
             }
           }}
           className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2 px-1 rounded-xl font-bold text-xs transition-all cursor-pointer relative ${
@@ -1819,13 +1822,14 @@ export default function PatientMobileDashboard({
 
             <button
               type="button"
-              onClick={() =>
+              onClick={() => {
+                const cleanId = String(pt?.healthId || patientHealthId).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
                 navigate(
                   'teleconsultation',
                   pt?.healthId || patientHealthId,
-                  activeDoctorCall?.sessionId || undefined
-                )
-              }
+                  activeDoctorCall?.sessionId || `room-${cleanId}`
+                );
+              }}
               className="w-full py-3 bg-white hover:bg-teal-50 text-teal-900 font-extrabold rounded-2xl text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-98 cursor-pointer"
             >
               <Icon name="video" size={16} />

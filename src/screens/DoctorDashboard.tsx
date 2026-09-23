@@ -225,7 +225,7 @@ export default function DoctorDashboard({
 
     ws.onopen = () => {
       ws.send(JSON.stringify({
-        type: 'call:join',
+        type: 'consultation:listen',
         role: 'doctor',
         userId: currentUser?.id || dbUser?.id || doctorId || 'doc-1',
         userName: dbUser?.fullName || currentUser?.fullName || 'Dr. Ankit Sharma',

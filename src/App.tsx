@@ -475,9 +475,9 @@ export default function App() {
     };
   }, [role, currentUser, screen]);
 
-  // Doctor Incoming Call WebSocket Listener
+  // Doctor Incoming Call WebSocket Listener (Active on all screens)
   useEffect(() => {
-    if (role !== 'doctor' || screen === 'teleconsultation') return;
+    if (role !== 'doctor') return;
 
     const ws = new WebSocket(getTeleconsultationWsUrl());
     ws.onerror = () => {};
@@ -508,7 +508,7 @@ export default function App() {
         ws.close();
       } catch {}
     };
-  }, [role, screen]);
+  }, [role]);
 
   // Cross-device single-session concurrency & real-time eviction listener
   useEffect(() => {
@@ -1748,7 +1748,7 @@ export default function App() {
       )}
 
       {/* Global Doctor Incoming Consultation Call Modal (Patient-initiated) */}
-      {role === 'doctor' && incomingDoctorCall && screen !== 'teleconsultation' && (
+      {role === 'doctor' && incomingDoctorCall && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fade-in">
           <div className="bg-slate-900 border-2 border-emerald-500/80 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl animate-scale-up text-white">
             <div className="relative w-20 h-20 mx-auto flex items-center justify-center">

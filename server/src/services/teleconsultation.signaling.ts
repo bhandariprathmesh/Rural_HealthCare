@@ -174,7 +174,18 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
           return;
         }
 
-        if (!sessionId && type !== 'call:check') {
+        if (
+          !sessionId &&
+          (type === 'call:check' ||
+            type === 'call:join' ||
+            type === 'consultation:listen' ||
+            type === 'call:listen')
+        ) {
+          // General listener registration for incoming calls
+          return;
+        }
+
+        if (!sessionId) {
           ws.send(JSON.stringify({ type: 'error', message: 'sessionId is required' }));
           return;
         }
@@ -336,10 +347,35 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
           case 'consultation:accept': {
             const role = (message.role || currentPeer?.role || 'patient').toLowerCase();
 
-            // Backend Rule: Patients accept consultations
             if (role === 'doctor') {
-              console.warn('[Teleconsultation WS] Doctor cannot accept their own consultation.');
-              ws.send(JSON.stringify({ type: 'error', message: 'Invalid action for doctor.' }));
+              const session = sessionsBySessionId.get(sessionId);
+              if (session) {
+                if (session.timeoutTimer) {
+                  clearTimeout(session.timeoutTimer);
+                  session.timeoutTimer = undefined;
+                }
+                session.status = 'ACTIVE';
+                const activePayload = {
+                  type: 'consultation:active',
+                  sessionId,
+                  patientId: session.patientId,
+                  doctorId: message.doctorId || session.doctorId,
+                  doctorName: message.doctorName || session.doctorName || 'Dr. Ankit Sharma (PHC Medical Officer)',
+                  facilityName: session.facilityName,
+                  status: 'ACTIVE',
+                };
+                broadcastAll(activePayload);
+                broadcastAll({ ...activePayload, type: 'consultation:accepted' });
+
+                const room = rooms.get(sessionId);
+                if (room && room.size >= 2) {
+                  for (const peer of room) {
+                    if (peer.ws.readyState === WebSocket.OPEN) {
+                      peer.ws.send(JSON.stringify({ type: 'call:start', sessionId, peerCount: room.size }));
+                    }
+                  }
+                }
+              }
               return;
             }
 

@@ -53,7 +53,15 @@ const RTC_CONFIG: RTCConfiguration = {
     { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
     { urls: ['stun:stun.cloudflare.com:3478'] },
     { urls: ['stun:global.stun.twilio.com:3478'] },
-    { urls: ['stun:stun.services.mozilla.com'] },
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turns:openrelay.metered.ca:443?transport=tcp',
+      ],
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
   ],
   iceCandidatePoolSize: 10,
 };
@@ -258,6 +266,13 @@ export default function TeleconsultationRoom({
   const [peerCount, setPeerCount] = useState<number>(1);
   const [peerEndedCall, setPeerEndedCall] = useState(false);
   const [cameraStatus, setCameraStatus] = useState<'active' | 'fallback' | 'loading'>('loading');
+  const [inRoomIncomingPatientCall, setInRoomIncomingPatientCall] = useState<{
+    sessionId: string;
+    patientId: string;
+    patientName: string;
+    reason?: string;
+    priority?: string;
+  } | null>(null);
 
   // Media Stream & Socket References
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -615,10 +630,10 @@ export default function TeleconsultationRoom({
     }
     const target = patient?.healthId || patient?.id || selectedPatientId || queryPatientId || patientId;
     if (target) {
-      const clean = target.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10);
+      const clean = String(target).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
       setSessionId(`room-${clean}`);
     }
-  }, [roomId, patient, selectedPatientId, queryPatientId, patientId, queryRoom]);
+  }, [roomId, patient?.healthId, patient?.id, selectedPatientId, queryPatientId, patientId, queryRoom]);
 
   // --------------------------------------------------------------------------
   // 5. WebRTC PeerConnection & WebSocket Signaling
@@ -687,8 +702,40 @@ export default function TeleconsultationRoom({
       const state = pc.iceConnectionState;
       if (state === 'connected' || state === 'completed') {
         setIsPeerConnected(true);
+        setSessionStatus('ACTIVE');
       } else if (state === 'disconnected' || state === 'failed') {
         setIsPeerConnected(false);
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'connected') {
+        setIsPeerConnected(true);
+        setSessionStatus('ACTIVE');
+      } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        setIsPeerConnected(false);
+      }
+    };
+
+    pc.onnegotiationneeded = async () => {
+      if (isDoctor && pc.signalingState === 'stable' && wsRef.current?.readyState === WebSocket.OPEN) {
+        try {
+          const offer = await pc.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: true,
+          });
+          await pc.setLocalDescription(offer);
+          wsRef.current.send(
+            JSON.stringify({
+              type: 'webrtc:offer',
+              sessionId,
+              sdp: offer,
+              senderRole: 'doctor',
+            })
+          );
+        } catch (e) {
+          console.warn('Renegotiation offer error:', e);
+        }
       }
     };
 
@@ -763,9 +810,33 @@ export default function TeleconsultationRoom({
             break;
           }
 
+          case 'consultation:incoming_from_patient':
+          case 'consultation:patient_calling': {
+            if (isDoctor) {
+              setInRoomIncomingPatientCall({
+                sessionId: data.sessionId,
+                patientId: data.patientId,
+                patientName: data.patientName || 'Patient',
+                reason: data.reason || 'Patient requested live teleconsultation',
+                priority: data.priority || 'ROUTINE',
+              });
+            }
+            break;
+          }
+
           case 'call:start': {
             setPeerCount(data.peerCount || 2);
-            // Ensure local tracks are attached before creating offer
+            setSessionStatus('ACTIVE');
+
+            // Guarantee local camera & mic stream is acquired before creating offer
+            if (!mediaStreamRef.current) {
+              try {
+                await initLocalCamera();
+              } catch (e) {
+                console.warn('Camera init fallback on call:start:', e);
+              }
+            }
+
             if (mediaStreamRef.current) {
               const senders = pc.getSenders();
               mediaStreamRef.current.getTracks().forEach((track) => {
@@ -803,7 +874,15 @@ export default function TeleconsultationRoom({
           case 'webrtc:offer': {
             if (pc.signalingState !== 'closed') {
               try {
-                // Ensure local tracks are attached before creating answer
+                // Guarantee local camera & mic stream is acquired before creating answer
+                if (!mediaStreamRef.current) {
+                  try {
+                    await initLocalCamera();
+                  } catch (e) {
+                    console.warn('Camera init fallback on webrtc:offer:', e);
+                  }
+                }
+
                 if (mediaStreamRef.current) {
                   const senders = pc.getSenders();
                   mediaStreamRef.current.getTracks().forEach((track) => {
@@ -1001,9 +1080,9 @@ export default function TeleconsultationRoom({
     const pId = targetPId || patient?.healthId || patient?.id || selectedPatientId || queryPatientId || patientId;
     if (!pId) return;
 
-    const cleanId = String(pId).replace(/[^a-zA-Z0-9]/g, '').slice(0, 10);
-    const newSessionId = `tc-${cleanId}-${Date.now().toString(36)}`;
-    setSessionId(newSessionId);
+    const cleanId = String(pId).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    const canonicalRoom = `room-${cleanId}`;
+    setSessionId(canonicalRoom);
     setSessionStatus('RINGING');
     setIsPeerConnected(false);
     setPeerEndedCall(false);
@@ -1035,7 +1114,7 @@ export default function TeleconsultationRoom({
 
     const payload = {
       type: 'consultation:start',
-      sessionId: newSessionId,
+      sessionId: canonicalRoom,
       patientId: pId,
       doctorId: currentUser?.doctorProfile?.id || currentUser?.id || 'doc-1',
       doctorName: doctorName,
@@ -1048,7 +1127,7 @@ export default function TeleconsultationRoom({
       wsRef.current.send(
         JSON.stringify({
           type: 'call:join',
-          sessionId: newSessionId,
+          sessionId: canonicalRoom,
           role: 'doctor',
           userId: currentUser?.id || 'doc-user',
           userName: doctorName,
@@ -2679,6 +2758,83 @@ export default function TeleconsultationRoom({
                 className="px-4 py-1.5 bg-white border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-100 font-semibold cursor-pointer shadow-xs"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* IN-ROOM INCOMING PATIENT CALL ALERT MODAL (Doctor Only) */}
+      {isDoctor && inRoomIncomingPatientCall && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-slate-900 border-2 border-emerald-400 rounded-3xl p-6 max-w-sm w-full text-center space-y-4 shadow-2xl text-white animate-in zoom-in-95 duration-200">
+            <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full bg-emerald-500/30 animate-ping" />
+              <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white shadow-lg">
+                <Icon name="video" size={32} className="animate-bounce" />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-emerald-500/20 text-emerald-300 rounded-full text-xs font-bold uppercase tracking-wider border border-emerald-500/30">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                Live Patient Calling
+              </div>
+              <h3 className="font-display text-xl font-bold text-white">
+                {inRoomIncomingPatientCall.patientName}
+              </h3>
+              <p className="text-xs text-gray-300">
+                Health ID: <span className="font-mono text-emerald-300 font-semibold">{inRoomIncomingPatientCall.patientId}</span>
+              </p>
+              <p className="text-[11px] text-gray-400 italic">
+                "{inRoomIncomingPatientCall.reason}"
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                    wsRef.current.send(JSON.stringify({
+                      type: 'consultation:reject',
+                      sessionId: inRoomIncomingPatientCall.sessionId,
+                      role: 'doctor',
+                    }));
+                  }
+                  setInRoomIncomingPatientCall(null);
+                }}
+                className="py-3 px-4 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-2xl text-xs font-bold border border-gray-700 transition-colors cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Icon name="phone_off" size={14} />
+                Decline
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const targetPId = inRoomIncomingPatientCall.patientId;
+                  const newSession = inRoomIncomingPatientCall.sessionId;
+                  if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                    wsRef.current.send(JSON.stringify({
+                      type: 'consultation:doctor_accept',
+                      sessionId: newSession,
+                      doctorId: currentUser?.doctorProfile?.id || currentUser?.id,
+                      doctorName: doctorNameRef.current,
+                      patientId: targetPId,
+                      role: 'doctor',
+                    }));
+                  }
+                  setInRoomIncomingPatientCall(null);
+                  setSelectedPatientId(targetPId);
+                  setSessionId(newSession);
+                  setSessionStatus('ACTIVE');
+                  setIsPeerConnected(false);
+                }}
+                className="py-3 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-2xl text-xs font-bold shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 animate-pulse"
+              >
+                <Icon name="video" size={16} />
+                Accept & Connect
               </button>
             </div>
           </div>
