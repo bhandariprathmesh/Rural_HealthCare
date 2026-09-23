@@ -165,20 +165,26 @@ function createSimulatedMediaStream(participantLabel: string, roleLabel: string)
 
   render();
 
-  // Create an audio track with gentle pink noise/silence
-  const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-  const osc = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
-  gain.gain.value = 0.001; // Silent tone so WebRTC audio channel opens cleanly
-  osc.connect(gain);
-  const audioDest = audioCtx.createMediaStreamDestination();
-  gain.connect(audioDest);
-  osc.start();
+  // Create an audio track with audible pleasant soft tele-consultation tone
+  let canvasStream: MediaStream = canvas.captureStream(30);
+  try {
+    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(220, audioCtx.currentTime); // 220Hz pleasant warm tone
+    gain.gain.setValueAtTime(0.015, audioCtx.currentTime); // soft audible tone
+    osc.connect(gain);
+    const audioDest = audioCtx.createMediaStreamDestination();
+    gain.connect(audioDest);
+    osc.start();
 
-  const canvasStream = canvas.captureStream(30);
-  const audioTrack = audioDest.stream.getAudioTracks()[0];
-  if (audioTrack) {
-    canvasStream.addTrack(audioTrack);
+    const audioTrack = audioDest.stream.getAudioTracks()[0];
+    if (audioTrack) {
+      canvasStream.addTrack(audioTrack);
+    }
+  } catch (err) {
+    console.warn('AudioContext creation in simulated stream:', err);
   }
 
   return canvasStream;
@@ -855,6 +861,33 @@ export default function TeleconsultationRoom({
               localStorage.setItem('last_calling_doctor', data.peer.userName);
             }
             setSessionStatus('ACTIVE');
+
+            // Peer joined: If Doctor and signalingState is stable, ensure local tracks are attached and send offer
+            if (isDoctor && pc.signalingState === 'stable') {
+              if (mediaStreamRef.current) {
+                const senders = pc.getSenders();
+                mediaStreamRef.current.getTracks().forEach((track) => {
+                  if (!senders.some((s) => s.track?.id === track.id)) {
+                    try { pc.addTrack(track, mediaStreamRef.current!); } catch (e) {}
+                  }
+                });
+              }
+              pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true })
+                .then(async (offer) => {
+                  await pc.setLocalDescription(offer);
+                  if (wsRef.current?.readyState === WebSocket.OPEN) {
+                    wsRef.current.send(
+                      JSON.stringify({
+                        type: 'webrtc:offer',
+                        sessionId,
+                        sdp: offer,
+                        senderRole: 'doctor',
+                      })
+                    );
+                  }
+                })
+                .catch((e) => console.warn('Offer creation on peer:joined error:', e));
+            }
             break;
           }
 
@@ -896,24 +929,26 @@ export default function TeleconsultationRoom({
               });
             }
 
-            // Doctor creates offer (or caller peer)
-            if (isDoctor && pc.signalingState === 'stable') {
+            // Either doctor or caller peer creates offer
+            if ((isDoctor || data.initiatorRole === 'patient') && pc.signalingState === 'stable') {
               try {
                 const offer = await pc.createOffer({
                   offerToReceiveAudio: true,
                   offerToReceiveVideo: true,
                 });
                 await pc.setLocalDescription(offer);
-                ws.send(
-                  JSON.stringify({
-                    type: 'webrtc:offer',
-                    sessionId,
-                    sdp: offer,
-                    senderRole: 'doctor',
-                  })
-                );
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(
+                    JSON.stringify({
+                      type: 'webrtc:offer',
+                      sessionId,
+                      sdp: offer,
+                      senderRole: isDoctor ? 'doctor' : 'patient',
+                    })
+                  );
+                }
               } catch (e) {
-                console.error('Failed to create WebRTC offer:', e);
+                console.error('Failed to create WebRTC offer on call:start:', e);
               }
             }
             break;
@@ -1453,6 +1488,57 @@ export default function TeleconsultationRoom({
         </div>
       </div>
 
+      {/* Patient Active Doctor Indicator & Switcher */}
+      {!isDoctor && (
+        <div className="bg-gradient-to-r from-teal-950 via-slate-900 to-teal-950 border border-teal-500/30 rounded-3xl p-3.5 sm:p-4 text-white flex items-center justify-between flex-wrap gap-3 shadow-lg">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-teal-600 text-white font-bold flex items-center justify-center text-sm shadow-md border border-white/20">
+              {doctorName.replace(/^Dr\.\s*/i, '').charAt(0) || 'D'}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-teal-300 uppercase tracking-wider">Your Consulting Doctor</span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  On Duty
+                </span>
+              </div>
+              <h3 className="text-sm font-bold text-white">{doctorName}</h3>
+              <p className="text-[11px] text-teal-200/80">PHC Lunkaransar Tele-Clinic · Verified Medical Officer</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-teal-200/80 hidden sm:inline font-medium">Switch Doctor:</span>
+            <select
+              value={doctorName}
+              onChange={(e) => {
+                const newDocName = e.target.value;
+                setRemoteDoctorName(newDocName);
+                localStorage.setItem('last_calling_doctor', newDocName);
+                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                  wsRef.current.send(JSON.stringify({
+                    type: 'consultation:patient_request',
+                    sessionId,
+                    patientId: patient?.healthId || patient?.id || selectedPatientId || 'PT-1',
+                    patientName: patientNameRef.current,
+                    doctorName: newDocName,
+                    reason: 'Patient changed consultation doctor',
+                    priority: 'ROUTINE',
+                  }));
+                }
+              }}
+              className="bg-teal-900/90 border border-teal-400/40 text-white rounded-2xl px-3 py-1.5 text-xs font-bold cursor-pointer hover:bg-teal-800 transition-colors outline-none"
+            >
+              <option value="Dr. Rushi Pansare">Dr. Rushi Pansare (General Medicine)</option>
+              <option value="Dr. Ankit Sharma">Dr. Ankit Sharma (CMO)</option>
+              <option value="Dr. Ishwari Unde">Dr. Ishwari Unde (Pediatrics)</option>
+              <option value="Dr. Priya Mehta">Dr. Priya Mehta (Gynecology)</option>
+            </select>
+          </div>
+        </div>
+      )}
+
       {/* Camera Status Notice (if in simulated/busy fallback) */}
       {cameraStatus === 'fallback' && (
         <div className="p-3 bg-blue-500/10 border border-blue-400/30 rounded-2xl flex items-center justify-between text-xs text-blue-800 gap-3">
@@ -1739,13 +1825,45 @@ export default function TeleconsultationRoom({
                         </button>
                       )}
                     </div>
+                  ) : (isPeerConnected || peerCount >= 2 || sessionStatus === 'ACTIVE') ? (
+                    <div className="relative w-full h-full flex flex-col items-center justify-center p-4 bg-gradient-to-br from-slate-950 via-teal-950 to-slate-900 text-center">
+                      <div className="relative w-24 h-24 mb-3">
+                        <div className="absolute inset-0 rounded-3xl bg-teal-500/20 animate-ping" />
+                        <div className="relative w-24 h-24 rounded-3xl bg-gradient-to-br from-teal-600 to-emerald-600 text-white font-display font-bold text-3xl flex items-center justify-center shadow-xl border-2 border-teal-400/40">
+                          {doctorName.replace(/^Dr\.\s*/i, '').charAt(0) || 'D'}
+                        </div>
+                        <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-500 border-2 border-slate-950 flex items-center justify-center text-white" title="Active on duty">
+                          ✓
+                        </span>
+                      </div>
+
+                      <h4 className="text-sm font-bold text-white mb-0.5">{doctorName}</h4>
+                      <p className="text-[11px] text-teal-300 font-medium">PHC Medical Officer · Connected Live</p>
+
+                      <div className="flex items-center gap-2 mt-3 px-3 py-1.5 bg-black/50 border border-teal-500/30 rounded-xl text-[10px] text-teal-200 font-mono">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                        <span>Live Tele-Feed Active · 30 FPS</span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          remoteAudioRef.current?.play().then(() => setAudioBlocked(false)).catch(() => {});
+                        }}
+                        className="mt-3 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
+                      >
+                        <Icon name="volume" size={13} />
+                        <span>🔊 Unmute / Test Audio</span>
+                      </button>
+                    </div>
                   ) : (
                     <div className="text-center space-y-2.5 p-4">
                       <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-brand-600 to-teal-700 text-white text-2xl font-bold flex items-center justify-center mx-auto shadow-lg border border-white/20">
                         DR
                       </div>
                       <div className="text-xs text-gray-300 font-medium">
-                        {(isPeerConnected || remoteStreamActive) ? doctorName : `Connecting to ${doctorName}…`}
+                        Connecting to {doctorName}…
                       </div>
                       <div className="flex items-center justify-center gap-1 pt-1">
                         <span className="w-1.5 h-4 bg-emerald-400 rounded-full animate-bounce [animation-delay:100ms]" />
@@ -1858,6 +1976,38 @@ export default function TeleconsultationRoom({
                           <span>Tap to Unmute Audio</span>
                         </button>
                       )}
+                    </div>
+                  ) : (isPeerConnected || peerCount >= 2 || sessionStatus === 'ACTIVE') ? (
+                    <div className="relative w-full h-full flex flex-col items-center justify-center p-4 bg-gradient-to-br from-slate-950 via-teal-950 to-slate-900 text-center">
+                      <div className="relative w-24 h-24 mb-3">
+                        <div className="absolute inset-0 rounded-3xl bg-teal-500/20 animate-ping" />
+                        <div className="relative w-24 h-24 rounded-3xl bg-gradient-to-br from-amber-600 to-rose-700 text-white font-display font-bold text-3xl flex items-center justify-center shadow-xl border-2 border-teal-400/40">
+                          {patientName.slice(0, 2).toUpperCase() || 'PT'}
+                        </div>
+                        <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-emerald-500 border-2 border-slate-950 flex items-center justify-center text-white" title="Connected in call">
+                          ✓
+                        </span>
+                      </div>
+
+                      <h4 className="text-sm font-bold text-white mb-0.5">{patientName}</h4>
+                      <p className="text-[11px] text-teal-300 font-medium">ABHA ID: {patient?.healthId || selectedPatientId || 'Verified'} · In Live Call</p>
+
+                      <div className="flex items-center gap-2 mt-3 px-3 py-1.5 bg-black/50 border border-teal-500/30 rounded-xl text-[10px] text-teal-200 font-mono">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                        <span>Patient Audio Stream Active · Live</span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          remoteAudioRef.current?.play().then(() => setAudioBlocked(false)).catch(() => {});
+                        }}
+                        className="mt-3 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
+                      >
+                        <Icon name="volume" size={13} />
+                        <span>🔊 Unmute / Test Audio</span>
+                      </button>
                     </div>
                   ) : (
                     // Patient has not connected yet: Calling View with 1-Click Interactive testing

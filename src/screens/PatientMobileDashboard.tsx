@@ -112,6 +112,49 @@ function QRCodeSVG({ text, size = 180 }: { text: string; size?: number }) {
   )
 }
 
+export const DEFAULT_ACTIVE_DOCTORS = [
+  {
+    id: 'doc-rushi',
+    name: 'Dr. Rushi Pansare',
+    specialty: 'General Medicine & Tele-Consultant',
+    qualification: 'MBBS, MD',
+    phone: '7410585523',
+    facility: { name: 'PHC Lunkaransar Tele-Clinic' },
+    facilityName: 'PHC Lunkaransar Tele-Clinic',
+    dutyStatus: 'AVAILABLE',
+  },
+  {
+    id: 'doc-ankit',
+    name: 'Dr. Ankit Sharma',
+    specialty: 'Chief Medical Officer',
+    qualification: 'MBBS, DNB',
+    phone: '9829000002',
+    facility: { name: 'PHC Lunkaransar Tele-Clinic' },
+    facilityName: 'PHC Lunkaransar Tele-Clinic',
+    dutyStatus: 'AVAILABLE',
+  },
+  {
+    id: 'doc-ishwari',
+    name: 'Dr. Ishwari Unde',
+    specialty: 'Pediatrics & Family Care',
+    qualification: 'MBBS, DCH',
+    phone: '7410585565',
+    facility: { name: 'PHC Tele-Medicine Unit' },
+    facilityName: 'PHC Tele-Medicine Unit',
+    dutyStatus: 'AVAILABLE',
+  },
+  {
+    id: 'doc-priya',
+    name: 'Dr. Priya Mehta',
+    specialty: 'Gynecology & Obstetrics',
+    qualification: 'MBBS, MS (OBG)',
+    phone: '9829000005',
+    facility: { name: 'CHC Central Hospital' },
+    facilityName: 'CHC Central Hospital',
+    dutyStatus: 'AVAILABLE',
+  },
+];
+
 export default function PatientMobileDashboard({
   navigate,
   onSOS,
@@ -158,8 +201,8 @@ export default function PatientMobileDashboard({
   const [appointments, setAppointments] = useState<any[]>([]);
   const [showBookModal, setShowBookModal] = useState(false);
   const [facilitiesList, setFacilitiesList] = useState<any[]>([]);
-  const [doctorsList, setDoctorsList] = useState<any[]>([]);
-  const [selectedDoctorForCall, setSelectedDoctorForCall] = useState<any>(null);
+  const [doctorsList, setDoctorsList] = useState<any[]>(DEFAULT_ACTIVE_DOCTORS);
+  const [selectedDoctorForCall, setSelectedDoctorForCall] = useState<any>(DEFAULT_ACTIVE_DOCTORS[0]);
   const [showDoctorPickerModal, setShowDoctorPickerModal] = useState(false);
   const [bookingLoading, setBookingLoading] = useState(false);
   const [bookedTokenCard, setBookedTokenCard] = useState<any | null>(null);
@@ -296,13 +339,18 @@ export default function PatientMobileDashboard({
 
     getDoctors()
       .then((docs) => {
-        if (Array.isArray(docs)) {
-          setDoctorsList(docs)
-          if (docs.length > 0) {
-            setBookDoctorId(docs[0].id)
-            const preferred = docs.find((d) => d.name?.toLowerCase().includes('rushi')) || docs[0]
-            setSelectedDoctorForCall(preferred)
+        if (Array.isArray(docs) && docs.length > 0) {
+          const merged = [...docs];
+          for (const def of DEFAULT_ACTIVE_DOCTORS) {
+            const cleanDefName = def.name.toLowerCase().replace(/^dr\.?\s*/i, '').trim();
+            if (!merged.some((d) => d.name?.toLowerCase().includes(cleanDefName))) {
+              merged.push(def);
+            }
           }
+          setDoctorsList(merged);
+          setBookDoctorId(merged[0].id);
+          const preferred = merged.find((d) => d.name?.toLowerCase().includes('rushi')) || merged[0];
+          setSelectedDoctorForCall(preferred);
         }
       })
       .catch(() => {})
@@ -1123,14 +1171,12 @@ export default function PatientMobileDashboard({
                   ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-400 ring-2 ring-emerald-300 animate-pulse'
                   : patientCallingState === 'calling'
                   ? 'bg-amber-100 text-amber-800 border-2 border-amber-400 animate-pulse'
-                  : 'bg-teal-50 text-teal-700',
+                  : 'bg-teal-50 text-teal-700 font-bold',
                 action: () => {
                   if (activeDoctorCall) {
                     handleAcceptCall();
-                  } else if (doctorsList.length > 1) {
-                    setShowDoctorPickerModal(true);
                   } else {
-                    handleInitiatePatientCall('Patient Video Consultation Request', selectedDoctorForCall);
+                    setShowDoctorPickerModal(true);
                   }
                 },
               },
@@ -1173,6 +1219,87 @@ export default function PatientMobileDashboard({
                 </span>
               </button>
             ))}
+          </div>
+
+          {/* ========================================================= */}
+          {/* PROMINENT LIVE DOCTOR CONSULTATION PICKER (Home Tab)       */}
+          {/* ========================================================= */}
+          <div className="bg-gradient-to-br from-teal-900 via-teal-800 to-slate-900 border border-teal-500/30 rounded-3xl p-4 sm:p-5 text-white shadow-xl space-y-3.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-teal-500/20 text-teal-300 flex items-center justify-center border border-teal-400/30 shadow-inner">
+                  <Icon name="stethoscope" size={18} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-white">Choose Doctor on Duty</h3>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-400/30">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      Live Ready
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-teal-200/80">Select a physician for instant 1-to-1 video teleconsultation</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDoctorPickerModal(true)}
+                className="text-xs text-teal-300 hover:text-white font-semibold underline cursor-pointer"
+              >
+                View All
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {doctorsList.slice(0, 4).map((doc) => {
+                const isSelected = (selectedDoctorForCall?.id === doc.id) || (!selectedDoctorForCall && doc.name?.toLowerCase().includes('rushi'));
+                return (
+                  <div
+                    key={doc.id}
+                    onClick={() => setSelectedDoctorForCall(doc)}
+                    className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                      isSelected
+                        ? 'border-emerald-400 bg-teal-950/80 ring-2 ring-emerald-400/50 shadow-lg'
+                        : 'border-white/10 bg-white/5 hover:bg-white/10'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
+                        isSelected ? 'bg-emerald-500 text-white shadow-md' : 'bg-white/10 text-teal-200'
+                      }`}>
+                        {doc.name.replace(/^Dr\.\s*/i, '').charAt(0)}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-white truncate flex items-center gap-1.5">
+                          <span>{doc.name}</span>
+                          {isSelected && <span className="text-[10px] text-emerald-400 font-extrabold">✓ Selected</span>}
+                        </div>
+                        <div className="text-[10px] text-teal-200/70 truncate">
+                          {doc.specialty || 'General Medicine'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedDoctorForCall(doc);
+                        handleInitiatePatientCall('Direct Video Consultation', doc);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 transition-all cursor-pointer shadow-md ${
+                        isSelected
+                          ? 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white animate-pulse'
+                          : 'bg-white/15 hover:bg-white/25 text-white'
+                      }`}
+                    >
+                      <Icon name="video" size={13} />
+                      <span>Call</span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {/* Who Has Access — Doctor consent summary */}
