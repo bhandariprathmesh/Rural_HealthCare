@@ -158,7 +158,11 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
     ws.on('message', async (data: string) => {
       try {
         const message = JSON.parse(data.toString());
-        const { type, sessionId } = message;
+        const { type } = message;
+        const rawSessionId = message.sessionId;
+        const sessionId = rawSessionId
+          ? `room-${String(rawSessionId).trim().replace(/^room-/i, '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase()}`
+          : rawSessionId;
 
         if (type === 'session:bind') {
           const targetUserId = message.userId;

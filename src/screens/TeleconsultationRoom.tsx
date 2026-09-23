@@ -45,8 +45,13 @@ const COMMON_DRUGS = [
   { name: 'Cetirizine', defaultDose: '10mg', defaultFreq: 'OD' as const, defaultDuration: '5 days' },
   { name: 'Iron & Folic Acid (IFA)', defaultDose: '1 tablet', defaultFreq: 'OD' as const, defaultDuration: '30 days' },
   { name: 'Pantoprazole', defaultDose: '40mg', defaultFreq: 'OD' as const, defaultDuration: '7 days' },
-  { name: 'Azithromycin', defaultDose: '500mg', defaultFreq: 'OD' as const, defaultDuration: '3 days' },
 ];
+
+export function getCanonicalRoomId(rawId?: string | null): string {
+  if (!rawId) return 'room-CLINIC';
+  const clean = String(rawId).trim().replace(/^room-/i, '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  return `room-${clean || 'CLINIC'}`;
+}
 
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
@@ -213,14 +218,12 @@ export default function TeleconsultationRoom({
       : currentUser?.role?.toLowerCase() === 'doctor' ||
         Boolean(currentUser?.doctorProfile);
 
-  // Session ID for room signaling
+  // Session ID for room signaling (Strictly canonical across all devices & roles)
   const [sessionId, setSessionId] = useState<string>(() => {
-    if (roomId) return roomId;
-    if (queryRoom) return queryRoom;
-    const cleanId = (queryPatientId || patientId || 'clinic')
-      .replace(/[^a-zA-Z0-9]/g, '')
-      .slice(0, 10);
-    return `room-${cleanId}`;
+    if (roomId) return getCanonicalRoomId(roomId);
+    if (queryRoom) return getCanonicalRoomId(queryRoom);
+    const targetId = queryPatientId || patientId || 'clinic';
+    return getCanonicalRoomId(targetId);
   });
 
   // Call & Network State
@@ -340,9 +343,12 @@ export default function TeleconsultationRoom({
     }
   }, []);
 
+  const cameraInitPromiseRef = useRef<Promise<MediaStream | null> | null>(null);
+
   const attachRemoteStream = useCallback((videoElement: HTMLVideoElement | null) => {
     remoteVideoRef.current = videoElement;
     if (videoElement && remoteStreamRef.current) {
+      videoElement.muted = true;
       if (videoElement.srcObject !== remoteStreamRef.current) {
         videoElement.srcObject = remoteStreamRef.current;
       }
@@ -358,11 +364,32 @@ export default function TeleconsultationRoom({
       if (audioElement.srcObject !== remoteStreamRef.current) {
         audioElement.srcObject = remoteStreamRef.current;
       }
-      audioElement.play().catch((err) => {
+      audioElement.play().then(() => {
+        setAudioBlocked(false);
+      }).catch((err) => {
         console.log('Remote audio autoplay blocked by browser policy:', err);
         setAudioBlocked(true);
       });
     }
+  }, []);
+
+  // Universal User Interaction Listener: unblocks audio and video upon any screen tap
+  useEffect(() => {
+    const unlockMedia = () => {
+      if (remoteAudioRef.current && remoteAudioRef.current.paused) {
+        remoteAudioRef.current.play().then(() => setAudioBlocked(false)).catch(() => {});
+      }
+      if (remoteVideoRef.current && remoteVideoRef.current.paused) {
+        remoteVideoRef.current.muted = true;
+        remoteVideoRef.current.play().catch(() => {});
+      }
+    };
+    window.addEventListener('click', unlockMedia, { passive: true });
+    window.addEventListener('touchstart', unlockMedia, { passive: true });
+    return () => {
+      window.removeEventListener('click', unlockMedia);
+      window.removeEventListener('touchstart', unlockMedia);
+    };
   }, []);
 
   // Effect to re-verify stream attachment whenever loading or stream state updates
@@ -378,6 +405,7 @@ export default function TeleconsultationRoom({
 
   useEffect(() => {
     if (remoteVideoRef.current && remoteStreamRef.current) {
+      remoteVideoRef.current.muted = true;
       if (remoteVideoRef.current.srcObject !== remoteStreamRef.current) {
         remoteVideoRef.current.srcObject = remoteStreamRef.current;
       }
@@ -387,7 +415,9 @@ export default function TeleconsultationRoom({
       if (remoteAudioRef.current.srcObject !== remoteStreamRef.current) {
         remoteAudioRef.current.srcObject = remoteStreamRef.current;
       }
-      remoteAudioRef.current.play().catch(() => {
+      remoteAudioRef.current.play().then(() => {
+        setAudioBlocked(false);
+      }).catch(() => {
         setAudioBlocked(true);
       });
     }
@@ -396,85 +426,103 @@ export default function TeleconsultationRoom({
   // --------------------------------------------------------------------------
   // 2. Local Media Acquisition (Webcam + Real Microphone with Fallback)
   // --------------------------------------------------------------------------
-  const initLocalCamera = useCallback(async () => {
-    setCameraStatus('loading');
-    let stream: MediaStream | null = null;
-
-    // Attempt 1: Standard Real Webcam + Microphone
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          frameRate: { ideal: 30 },
-        },
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      setCameraStatus('active');
-    } catch (err1: any) {
-      console.warn('Full video+audio getUserMedia rejected or in use:', err1?.message);
-
-      // Attempt 2: Video only (in case audio device is blocked)
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        setCameraStatus('active');
-      } catch (err2: any) {
-        console.warn('Hardware camera unavailable or denied:', err2?.message);
-        const label = isDoctor ? doctorNameRef.current : patientNameRef.current;
-        const role = isDoctor ? 'PHC Medical Officer' : 'Patient / ASHA Assisted';
-        stream = createSimulatedMediaStream(label, role);
-        setCameraStatus('fallback');
-      }
+  const initLocalCamera = useCallback(async (): Promise<MediaStream | null> => {
+    if (mediaStreamRef.current && mediaStreamRef.current.active && mediaStreamRef.current.getVideoTracks().length > 0) {
+      return mediaStreamRef.current;
+    }
+    if (cameraInitPromiseRef.current) {
+      return cameraInitPromiseRef.current;
     }
 
-    // Always attempt to attach real microphone if not already present in stream
-    if (stream && stream.getAudioTracks().length === 0) {
+    const initPromise = (async () => {
+      setCameraStatus('loading');
+      let stream: MediaStream | null = null;
+
+      // Attempt 1: Standard Real Webcam + Microphone
       try {
-        const audioOnly = await navigator.mediaDevices.getUserMedia({
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 30 },
+          },
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
           },
-          video: false,
         });
-        const realAudio = audioOnly.getAudioTracks()[0];
-        if (realAudio) {
-          // Replace any synthetic audio track with real mic track
-          stream.getAudioTracks().forEach((t) => stream!.removeTrack(t));
-          stream.addTrack(realAudio);
+        setCameraStatus('active');
+      } catch (err1: any) {
+        console.warn('Full video+audio getUserMedia rejected or in use:', err1?.message);
+
+        // Attempt 2: Video only (in case audio device is blocked)
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          setCameraStatus('active');
+        } catch (err2: any) {
+          console.warn('Hardware camera unavailable or denied:', err2?.message);
+          const label = isDoctor ? doctorNameRef.current : patientNameRef.current;
+          const role = isDoctor ? 'PHC Medical Officer' : 'Patient / ASHA Assisted';
+          stream = createSimulatedMediaStream(label, role);
+          setCameraStatus('fallback');
         }
-      } catch (micErr) {
-        console.warn('Real microphone unavailable:', micErr);
       }
-    }
 
-    mediaStreamRef.current = stream;
-
-    // Attach to local video element immediately
-    if (localVideoRef.current && stream) {
-      localVideoRef.current.srcObject = stream;
-      localVideoRef.current.muted = true;
-      localVideoRef.current.play().catch(() => {});
-    }
-
-    // Attach tracks to WebRTC peer connection if initialized
-    if (pcRef.current && stream) {
-      const senders = pcRef.current.getSenders();
-      stream.getTracks().forEach((track) => {
-        const alreadyAdded = senders.some((s) => s.track?.id === track.id);
-        if (!alreadyAdded) {
-          try {
-            pcRef.current?.addTrack(track, stream!);
-          } catch (e) {
-            console.warn('Error adding track to PC:', e);
+      // Always attempt to attach real microphone if not already present in stream
+      if (stream && stream.getAudioTracks().length === 0) {
+        try {
+          const audioOnly = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+            video: false,
+          });
+          const realAudio = audioOnly.getAudioTracks()[0];
+          if (realAudio) {
+            // Replace any synthetic audio track with real mic track
+            stream.getAudioTracks().forEach((t) => stream!.removeTrack(t));
+            stream.addTrack(realAudio);
           }
+        } catch (micErr) {
+          console.warn('Real microphone unavailable:', micErr);
         }
-      });
+      }
+
+      mediaStreamRef.current = stream;
+
+      // Attach to local video element immediately
+      if (localVideoRef.current && stream) {
+        localVideoRef.current.srcObject = stream;
+        localVideoRef.current.muted = true;
+        localVideoRef.current.play().catch(() => {});
+      }
+
+      // Attach tracks to WebRTC peer connection if initialized
+      if (pcRef.current && stream) {
+        const senders = pcRef.current.getSenders();
+        stream.getTracks().forEach((track) => {
+          const alreadyAdded = senders.some((s) => s.track?.id === track.id);
+          if (!alreadyAdded) {
+            try {
+              pcRef.current?.addTrack(track, stream!);
+            } catch (e) {
+              console.warn('Error adding track to PC:', e);
+            }
+          }
+        });
+      }
+
+      return stream;
+    })();
+
+    cameraInitPromiseRef.current = initPromise;
+    try {
+      return await initPromise;
+    } finally {
+      cameraInitPromiseRef.current = null;
     }
   }, [isDoctor]);
 
@@ -919,7 +967,7 @@ export default function TeleconsultationRoom({
           }
 
           case 'webrtc:answer': {
-            if (isDoctor && pc.signalingState !== 'closed') {
+            if (pc.signalingState === 'have-local-offer') {
               try {
                 await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
                 while (iceCandidatesQueue.current.length > 0) {
@@ -991,7 +1039,7 @@ export default function TeleconsultationRoom({
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           JSON.stringify({
-            type: 'call:end',
+            type: 'peer:left',
             sessionId,
             senderRole: isDoctor ? 'doctor' : 'patient',
           })
@@ -1080,8 +1128,7 @@ export default function TeleconsultationRoom({
     const pId = targetPId || patient?.healthId || patient?.id || selectedPatientId || queryPatientId || patientId;
     if (!pId) return;
 
-    const cleanId = String(pId).replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    const canonicalRoom = `room-${cleanId}`;
+    const canonicalRoom = getCanonicalRoomId(pId);
     setSessionId(canonicalRoom);
     setSessionStatus('RINGING');
     setIsPeerConnected(false);
@@ -1357,17 +1404,17 @@ export default function TeleconsultationRoom({
           {/* Connection Status Badge */}
           <div
             className={`px-3 py-1.5 rounded-2xl text-xs font-semibold flex items-center gap-2 border ${
-              isPeerConnected
+              isPeerConnected || remoteStreamActive
                 ? 'bg-emerald-950/60 text-emerald-300 border-emerald-600/40'
                 : 'bg-amber-950/60 text-amber-300 border-amber-600/40'
             }`}
           >
             <span
               className={`w-1.5 h-1.5 rounded-full ${
-                isPeerConnected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'
+                isPeerConnected || remoteStreamActive ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'
               }`}
             />
-            <span>{isPeerConnected ? 'P2P Live (1-to-1)' : isDoctor ? 'Waiting for Patient…' : 'Connecting to Doctor…'}</span>
+            <span>{isPeerConnected || remoteStreamActive ? 'P2P Live (1-to-1)' : isDoctor ? 'Waiting for Patient…' : 'Connecting to Doctor…'}</span>
           </div>
 
           {/* Network Quality */}
@@ -1661,24 +1708,44 @@ export default function TeleconsultationRoom({
                 ) : (
                   // Remote stream for Patient: Patient sees Doctor!
                   remoteStreamActive && !remoteLowBandwidth ? (
-                    <video
-                      ref={attachRemoteStream}
-                      autoPlay
-                      playsInline
-                      onLoadedMetadata={(e) => (e.currentTarget as HTMLVideoElement).play().catch(() => {})}
-                      style={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'cover',
-                      }}
-                    />
+                    <div className="relative w-full h-full" onClick={() => remoteAudioRef.current?.play().then(() => setAudioBlocked(false)).catch(() => {})}>
+                      <video
+                        ref={attachRemoteStream}
+                        autoPlay
+                        playsInline
+                        muted
+                        onLoadedMetadata={(e) => {
+                          const el = e.currentTarget as HTMLVideoElement;
+                          el.muted = true;
+                          el.play().catch(() => {});
+                        }}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                        }}
+                      />
+                      {audioBlocked && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            remoteAudioRef.current?.play().then(() => setAudioBlocked(false)).catch(() => {});
+                          }}
+                          className="absolute top-4 left-1/2 -translate-x-1/2 z-30 px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold rounded-full text-xs flex items-center gap-1.5 shadow-xl animate-bounce cursor-pointer border border-amber-500"
+                        >
+                          <Icon name="volume" size={13} />
+                          <span>Tap to Unmute Audio</span>
+                        </button>
+                      )}
+                    </div>
                   ) : (
                     <div className="text-center space-y-2.5 p-4">
                       <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-brand-600 to-teal-700 text-white text-2xl font-bold flex items-center justify-center mx-auto shadow-lg border border-white/20">
                         DR
                       </div>
                       <div className="text-xs text-gray-300 font-medium">
-                        {isPeerConnected ? doctorName : `Connecting to ${doctorName}…`}
+                        {(isPeerConnected || remoteStreamActive) ? doctorName : `Connecting to ${doctorName}…`}
                       </div>
                       <div className="flex items-center justify-center gap-1 pt-1">
                         <span className="w-1.5 h-4 bg-emerald-400 rounded-full animate-bounce [animation-delay:100ms]" />
@@ -1695,7 +1762,7 @@ export default function TeleconsultationRoom({
                 <span className="truncate max-w-[200px]">PHC Lunkaransar · HPR-RJ-2024-8841</span>
                 <span className="text-emerald-400 flex items-center gap-1 shrink-0 font-medium">
                   <Icon name="check" size={12} />
-                  {isDoctor ? (cameraStatus === 'fallback' ? 'Live Stream' : 'Live Camera') : isPeerConnected ? 'Connected' : 'Calling…'}
+                  {isDoctor ? (cameraStatus === 'fallback' ? 'Live Stream' : 'Live Camera') : (isPeerConnected || remoteStreamActive) ? 'Connected' : 'Calling…'}
                 </span>
               </div>
             </div>
@@ -1709,7 +1776,7 @@ export default function TeleconsultationRoom({
                 <div className="flex items-center gap-2 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-xl text-white text-xs border border-white/10">
                   <div
                     className={`w-2.5 h-2.5 rounded-full ${
-                      !isDoctor || isPeerConnected ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'
+                      !isDoctor || isPeerConnected || remoteStreamActive ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'
                     }`}
                   />
                   <span className="font-semibold truncate max-w-[150px]">
@@ -1761,17 +1828,37 @@ export default function TeleconsultationRoom({
                 ) : (
                   // Remote stream for Doctor: Doctor sees Patient!
                   remoteStreamActive && !remoteLowBandwidth ? (
-                    <video
-                      ref={attachRemoteStream}
-                      autoPlay
-                      playsInline
-                      onLoadedMetadata={(e) => (e.currentTarget as HTMLVideoElement).play().catch(() => {})}
-                      style={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'cover',
-                      }}
-                    />
+                    <div className="relative w-full h-full" onClick={() => remoteAudioRef.current?.play().then(() => setAudioBlocked(false)).catch(() => {})}>
+                      <video
+                        ref={attachRemoteStream}
+                        autoPlay
+                        playsInline
+                        muted
+                        onLoadedMetadata={(e) => {
+                          const el = e.currentTarget as HTMLVideoElement;
+                          el.muted = true;
+                          el.play().catch(() => {});
+                        }}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                        }}
+                      />
+                      {audioBlocked && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            remoteAudioRef.current?.play().then(() => setAudioBlocked(false)).catch(() => {});
+                          }}
+                          className="absolute top-4 left-1/2 -translate-x-1/2 z-30 px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold rounded-full text-xs flex items-center gap-1.5 shadow-xl animate-bounce cursor-pointer border border-amber-500"
+                        >
+                          <Icon name="volume" size={13} />
+                          <span>Tap to Unmute Audio</span>
+                        </button>
+                      )}
+                    </div>
                   ) : (
                     // Patient has not connected yet: Calling View with 1-Click Interactive testing
                     <div className="text-center space-y-3 p-4 max-w-xs mx-auto">
@@ -1815,7 +1902,7 @@ export default function TeleconsultationRoom({
                 <span>ABHA ID: {patient?.healthId || selectedPatientId || 'RHC-2026-NLNXCF'}</span>
                 <span className="text-teal-400 flex items-center gap-1 shrink-0 font-medium">
                   <Icon name="shield" size={12} />
-                  {!isDoctor ? 'Self View (Live)' : isPeerConnected ? 'Live Video' : 'Ringing…'}
+                  {!isDoctor ? 'Self View (Live)' : (isPeerConnected || remoteStreamActive) ? 'Live Video' : 'Ringing…'}
                 </span>
               </div>
             </div>

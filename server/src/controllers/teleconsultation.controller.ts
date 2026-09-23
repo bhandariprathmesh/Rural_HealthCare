@@ -77,7 +77,7 @@ export async function createSession(req: Request, res: Response, next: NextFunct
         sessionId,
         patientId: input.patientId,
         doctorId: input.doctorId || 'doc-1',
-        doctorName: isPatient ? (input.doctorName || 'Dr. Ankit Sharma') : ((req as any).user?.fullName || 'Dr. Ankit Sharma'),
+        doctorName: isPatient ? ((input as any).doctorName || 'Dr. Ankit Sharma') : ((req as any).user?.fullName || 'Dr. Ankit Sharma'),
         facilityName: 'PHC Lunkaransar Tele-Clinic',
         status: 'WAITING',
         createdAt: Date.now(),
