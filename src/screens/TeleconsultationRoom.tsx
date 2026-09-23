@@ -310,8 +310,8 @@ export default function TeleconsultationRoom({
     const qDoc = queryParams.get('doctorName');
     if (qDoc) return qDoc;
     const stored = localStorage.getItem('last_calling_doctor');
-    if (stored && !stored.toLowerCase().includes('rushi')) return stored;
-    return 'Dr. Ankit Sharma (PHC Medical Officer)';
+    if (stored) return stored;
+    return 'Dr. Rushi Pansare (PHC Medical Officer)';
   });
 
   // Doctor Name: If logged-in user is doctor, use their name. If logged-in user is patient, use remote doctor name!

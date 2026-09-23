@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { AppError } from '../middleware/error.js';
 import { RiskLevel } from '@prisma/client';
-import { getActiveCallForPatient, activeCalls } from '../services/teleconsultation.signaling.js';
+import { getActiveCallForPatient, getActiveCallForDoctor, activeCalls } from '../services/teleconsultation.signaling.js';
 
 const createSessionSchema = z.object({
   patientId: z.string().optional(),
@@ -39,21 +39,28 @@ const saveTeleconsultationSchema = z.object({
 });
 
 /**
- * Checks if there is an active incoming call for a patient.
+ * Checks if there is an active incoming call for a patient or doctor.
  * GET /api/v1/teleconsultation/active-call
  */
 export async function getActiveCall(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const patientId = typeof req.query.patientId === 'string' ? req.query.patientId : '';
-    if (!patientId) {
-      res.status(200).json({ success: true, data: { activeCall: null } });
+    const doctorId = typeof req.query.doctorId === 'string' ? req.query.doctorId : '';
+    const doctorUserId = typeof req.query.doctorUserId === 'string' ? req.query.doctorUserId : '';
+
+    if (doctorId || doctorUserId) {
+      const activeCall = await getActiveCallForDoctor(doctorId, doctorUserId);
+      res.status(200).json({ success: true, data: { activeCall } });
       return;
     }
-    const activeCall = await getActiveCallForPatient(patientId);
-    res.status(200).json({
-      success: true,
-      data: { activeCall },
-    });
+
+    if (patientId) {
+      const activeCall = await getActiveCallForPatient(patientId);
+      res.status(200).json({ success: true, data: { activeCall } });
+      return;
+    }
+
+    res.status(200).json({ success: true, data: { activeCall: null } });
   } catch (err) {
     next(err);
   }

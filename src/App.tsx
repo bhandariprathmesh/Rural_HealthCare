@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Role } from './types';
 import { Icon, OfflineIndicator, ErrorBoundary } from './components/shared';
-import { getCurrentUser, getToken, clearToken, dispatchSosAlert, getActiveSosAlerts, acceptSosAlert, declineSosAlert, getActiveTeleconsultationCall, getTeleconsultationWsUrl } from './api/client';
+import { getCurrentUser, getToken, clearToken, dispatchSosAlert, getActiveSosAlerts, acceptSosAlert, declineSosAlert, getActiveTeleconsultationCall, getActiveTeleconsultationCallForDoctor, getTeleconsultationWsUrl } from './api/client';
 import { syncEngine } from './services/syncEngine';
 import {
   capturePreciseGpsLocation,
@@ -475,40 +475,140 @@ export default function App() {
     };
   }, [role, currentUser, screen]);
 
-  // Doctor Incoming Call WebSocket Listener (Active on all screens)
+  // Friendly hospital incoming call dual-tone chime for Doctors
+  const playDoctorIncomingChime = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const t = ctx.currentTime;
+      const notes = [
+        { f: 587.33, s: 0, d: 0.25 },
+        { f: 880.0, s: 0.15, d: 0.3 },
+        { f: 1174.66, s: 0.3, d: 0.4 },
+      ];
+      for (const n of notes) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(n.f, t + n.s);
+        gain.gain.setValueAtTime(0.25, t + n.s);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + n.s + n.d);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t + n.s);
+        osc.stop(t + n.s + n.d);
+      }
+    } catch {}
+  };
+
+  // Doctor Incoming Call WebSocket Listener & Real-time Poller (Active across all screens)
   useEffect(() => {
     if (role !== 'doctor') return;
 
-    const ws = new WebSocket(getTeleconsultationWsUrl());
-    ws.onerror = () => {};
+    let isMounted = true;
+    const myDocId = currentUser?.doctorProfile?.id || currentUser?.id;
+    const myUserId = currentUser?.id;
+    const myDocNames = [currentUser?.doctorProfile?.name, currentUser?.fullName].filter(Boolean).map(String);
 
-    ws.onmessage = (event) => {
+    const checkDoctorCall = async () => {
       try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'consultation:incoming_from_patient' || data.type === 'consultation:patient_calling') {
-          setIncomingDoctorCall({
-            sessionId: data.sessionId,
-            patientId: data.patientId,
-            patientName: data.patientName || 'Patient',
-            reason: data.reason || 'Patient Video Consultation Request',
-            priority: data.priority || 'ROUTINE',
-          });
-        } else if (
-          data.type === 'call:end' ||
-          data.type === 'consultation:end' ||
-          data.type === 'consultation:missed'
-        ) {
-          setIncomingDoctorCall((prev) => (prev?.sessionId === data.sessionId ? null : prev));
+        if (!myDocId && !myUserId) return;
+        const active = await getActiveTeleconsultationCallForDoctor(myDocId, myUserId);
+        if (isMounted) {
+          if (active && active.status === 'RINGING' && (!incomingDoctorCall || incomingDoctorCall.sessionId !== active.sessionId)) {
+            setIncomingDoctorCall({
+              sessionId: active.sessionId,
+              patientId: active.patientId,
+              patientName: active.patientName || 'Patient',
+              reason: active.reason || 'Patient Video Consultation Request',
+              priority: active.priority || 'ROUTINE',
+            });
+            playDoctorIncomingChime();
+          } else if (!active && incomingDoctorCall) {
+            setIncomingDoctorCall(null);
+          }
         }
       } catch {}
     };
 
-    return () => {
+    checkDoctorCall();
+    const interval = setInterval(checkDoctorCall, 2500);
+
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: any = null;
+
+    const connectDoctorWs = () => {
       try {
-        ws.close();
+        ws = new WebSocket(getTeleconsultationWsUrl());
+        ws.onerror = () => {};
+
+        ws.onopen = () => {
+          ws?.send(
+            JSON.stringify({
+              type: 'consultation:listen',
+              role: 'doctor',
+              userId: myUserId,
+              doctorId: myDocId,
+              userName: currentUser?.doctorProfile?.name || currentUser?.fullName || 'Doctor',
+            })
+          );
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'consultation:incoming_from_patient' || data.type === 'consultation:patient_calling') {
+              const targetDocId = String(data.doctorId || '').trim().toLowerCase();
+              const targetDocName = String(data.doctorName || '').trim().toLowerCase();
+              const myIds = [myDocId, myUserId].filter(Boolean).map((s) => String(s).toLowerCase());
+
+              const isMatch =
+                !targetDocId ||
+                targetDocId === 'all' ||
+                targetDocId === 'doc-1' ||
+                myIds.some((id) => id === targetDocId || id.replace(/[^a-zA-Z0-9]/g, '') === targetDocId.replace(/[^a-zA-Z0-9]/g, '')) ||
+                myDocNames.some((name) => targetDocName && (name.toLowerCase().includes(targetDocName) || targetDocName.toLowerCase().includes(name.toLowerCase())));
+
+              if (isMatch) {
+                setIncomingDoctorCall({
+                  sessionId: data.sessionId,
+                  patientId: data.patientId,
+                  patientName: data.patientName || 'Patient',
+                  reason: data.reason || 'Patient Video Consultation Request',
+                  priority: data.priority || 'ROUTINE',
+                });
+                playDoctorIncomingChime();
+              }
+            } else if (
+              data.type === 'call:end' ||
+              data.type === 'consultation:end' ||
+              data.type === 'consultation:missed'
+            ) {
+              setIncomingDoctorCall((prev) => (prev?.sessionId === data.sessionId ? null : prev));
+            }
+          } catch {}
+        };
+
+        ws.onclose = () => {
+          if (isMounted) {
+            reconnectTimeout = setTimeout(connectDoctorWs, 3000);
+          }
+        };
       } catch {}
     };
-  }, [role]);
+
+    connectDoctorWs();
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      try {
+        ws?.close();
+      } catch {}
+    };
+  }, [role, currentUser]);
 
   // Cross-device single-session concurrency & real-time eviction listener
   useEffect(() => {
@@ -1803,7 +1903,9 @@ export default function App() {
                 onClick={() => {
                   const pId = incomingDoctorCall.patientId;
                   const sId = incomingDoctorCall.sessionId;
+                  const docName = currentUser?.doctorProfile?.name || currentUser?.fullName || 'Dr. Rushi Pansare (PHC Medical Officer)';
                   try {
+                    localStorage.setItem('last_calling_doctor', docName);
                     const ws = new WebSocket(getTeleconsultationWsUrl());
                     ws.onerror = () => {};
                     ws.onopen = () => {
@@ -1811,7 +1913,7 @@ export default function App() {
                         type: 'consultation:doctor_accept',
                         sessionId: sId,
                         doctorId: currentUser?.doctorProfile?.id || currentUser?.id,
-                        doctorName: currentUser?.doctorProfile?.name || currentUser?.fullName || 'Dr. Ankit Sharma (PHC Medical Officer)',
+                        doctorName: docName,
                         patientId: pId,
                         role: 'doctor',
                       }));

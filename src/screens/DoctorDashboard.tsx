@@ -220,51 +220,88 @@ export default function DoctorDashboard({
   }, [opdAppointments, slotCapacity])
 
   useEffect(() => {
-    const ws = new WebSocket(getTeleconsultationWsUrl());
-    ws.onerror = () => {};
+    let isDisposed = false;
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: any = null;
 
-    ws.onopen = () => {
-      ws.send(JSON.stringify({
-        type: 'consultation:listen',
-        role: 'doctor',
-        userId: currentUser?.id || dbUser?.id || doctorId || 'doc-1',
-        userName: dbUser?.fullName || currentUser?.fullName || 'Dr. Ankit Sharma',
-      }));
-    };
+    const myDocId = doctorId || dbUser?.doctorProfile?.id || currentUser?.doctorProfile?.id || dbUser?.id || currentUser?.id;
+    const myUserId = dbUser?.id || currentUser?.id;
+    const myDocNames = [dbUser?.doctorProfile?.name, dbUser?.fullName, currentUser?.doctorProfile?.name, currentUser?.fullName].filter(Boolean).map(String);
+    const myDocName = myDocNames[0] || 'Doctor';
 
-    ws.onmessage = (event) => {
+    const connectWs = () => {
       try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'consultation:patient_calling' || data.type === 'consultation:incoming_from_patient') {
-          setIncomingPatientCall({
-            sessionId: data.sessionId,
-            patientId: data.patientId,
-            patientName: data.patientName || 'Patient',
-            reason: data.reason,
-            priority: data.priority,
-          });
-        } else if (data.type === 'consultation:active' && data.patientId) {
-          setPatientCallStatus((prev) => ({ ...prev, [data.patientId]: 'active' }));
-        } else if (data.type === 'consultation:missed' && data.patientId) {
-          setPatientCallStatus((prev) => ({ ...prev, [data.patientId]: 'missed' }));
-        } else if (data.type === 'consultation:end' && data.sessionId) {
-          setIncomingPatientCall((prev) => (prev?.sessionId === data.sessionId ? null : prev));
-          setPatientCallStatus((prev) => {
-            const next = { ...prev };
-            for (const k in next) {
-              if (next[k] === 'ringing' || next[k] === 'active') {
-                next[k] = 'available';
+        ws = new WebSocket(getTeleconsultationWsUrl());
+        ws.onerror = () => {};
+
+        ws.onopen = () => {
+          ws?.send(JSON.stringify({
+            type: 'consultation:listen',
+            role: 'doctor',
+            userId: myUserId || 'doc-1',
+            doctorId: myDocId || 'doc-1',
+            userName: myDocName,
+          }));
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'consultation:patient_calling' || data.type === 'consultation:incoming_from_patient') {
+              const targetDocId = String(data.doctorId || '').trim().toLowerCase();
+              const targetDocName = String(data.doctorName || '').trim().toLowerCase();
+              const myIds = [myDocId, myUserId].filter(Boolean).map((s) => String(s).toLowerCase());
+
+              const isMatch =
+                !targetDocId ||
+                targetDocId === 'all' ||
+                targetDocId === 'doc-1' ||
+                myIds.some((id) => id === targetDocId || id.replace(/[^a-zA-Z0-9]/g, '') === targetDocId.replace(/[^a-zA-Z0-9]/g, '')) ||
+                myDocNames.some((name) => targetDocName && (name.toLowerCase().includes(targetDocName) || targetDocName.toLowerCase().includes(name.toLowerCase())));
+
+              if (isMatch) {
+                setIncomingPatientCall({
+                  sessionId: data.sessionId,
+                  patientId: data.patientId,
+                  patientName: data.patientName || 'Patient',
+                  reason: data.reason,
+                  priority: data.priority,
+                });
               }
+            } else if (data.type === 'consultation:active' && data.patientId) {
+              setPatientCallStatus((prev) => ({ ...prev, [data.patientId]: 'active' }));
+            } else if (data.type === 'consultation:missed' && data.patientId) {
+              setPatientCallStatus((prev) => ({ ...prev, [data.patientId]: 'missed' }));
+            } else if (data.type === 'consultation:end' && data.sessionId) {
+              setIncomingPatientCall((prev) => (prev?.sessionId === data.sessionId ? null : prev));
+              setPatientCallStatus((prev) => {
+                const next = { ...prev };
+                for (const k in next) {
+                  if (next[k] === 'ringing' || next[k] === 'active') {
+                    next[k] = 'available';
+                  }
+                }
+                return next;
+              });
             }
-            return next;
-          });
-        }
+          } catch {}
+        };
+
+        ws.onclose = () => {
+          if (!isDisposed) {
+            reconnectTimeout = setTimeout(connectWs, 3000);
+          }
+        };
       } catch {}
     };
 
+    connectWs();
+
     return () => {
+      isDisposed = true;
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
       try {
-        ws.close();
+        ws?.close();
       } catch {}
     };
   }, [currentUser, dbUser, doctorId]);
@@ -272,13 +309,16 @@ export default function DoctorDashboard({
   const handleAcceptIncomingPatientCall = () => {
     if (!incomingPatientCall) return;
     const { sessionId, patientId } = incomingPatientCall;
+    const myDocName = dbUser?.doctorProfile?.name || dbUser?.fullName || currentUser?.doctorProfile?.name || currentUser?.fullName || 'Dr. Rushi Pansare (PHC Medical Officer)';
+    localStorage.setItem('last_calling_doctor', myDocName);
+
     const ws = new WebSocket(getTeleconsultationWsUrl());
     ws.onopen = () => {
       ws.send(JSON.stringify({
         type: 'consultation:doctor_accept',
         sessionId,
         doctorId: doctorId || dbUser?.doctorProfile?.id || dbUser?.id,
-        doctorName: dbUser?.doctorProfile?.name || dbUser?.fullName || 'Dr. Ankit Sharma',
+        doctorName: myDocName,
         patientId,
       }));
       setTimeout(() => ws.close(), 500);

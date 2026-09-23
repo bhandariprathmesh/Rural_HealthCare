@@ -117,6 +117,51 @@ export async function getActiveCallForPatient(patientId: string): Promise<Active
   return null;
 }
 
+export async function getActiveCallForDoctor(doctorId?: string, doctorUserId?: string): Promise<ActiveCallInfo | null> {
+  const cleanDocId = (doctorId || '').trim().toLowerCase();
+  const cleanUserId = (doctorUserId || '').trim().toLowerCase();
+
+  for (const session of sessionsBySessionId.values()) {
+    if (session.status === 'RINGING') {
+      if (Date.now() - session.createdAt > 180000) {
+        continue;
+      }
+      const sDocId = (session.doctorId || '').trim().toLowerCase();
+      if (
+        !sDocId ||
+        sDocId === 'all' ||
+        sDocId === 'doc-1' ||
+        (cleanDocId && sDocId === cleanDocId) ||
+        (cleanUserId && sDocId === cleanUserId) ||
+        (cleanDocId && sDocId.replace(/[^a-zA-Z0-9]/g, '') === cleanDocId.replace(/[^a-zA-Z0-9]/g, ''))
+      ) {
+        return session;
+      }
+    }
+  }
+
+  for (const call of activeCalls.values()) {
+    if (call.status === 'RINGING') {
+      if (Date.now() - call.createdAt > 180000) {
+        continue;
+      }
+      const cDocId = (call.doctorId || '').trim().toLowerCase();
+      if (
+        !cDocId ||
+        cDocId === 'all' ||
+        cDocId === 'doc-1' ||
+        (cleanDocId && cDocId === cleanDocId) ||
+        (cleanUserId && cDocId === cleanUserId) ||
+        (cleanDocId && cDocId.replace(/[^a-zA-Z0-9]/g, '') === cleanDocId.replace(/[^a-zA-Z0-9]/g, ''))
+      ) {
+        return call;
+      }
+    }
+  }
+
+  return null;
+}
+
 export function removeActiveCall(sessionId: string) {
   const s = sessionsBySessionId.get(sessionId);
   if (s?.timeoutTimer) {
@@ -433,14 +478,15 @@ export function setupTeleconsultationSignaling(server: HttpServer): WebSocketSer
           // =========================================================================
           case 'consultation:patient_request': {
             const { patientId, patientName, doctorId, doctorName, facilityName, reason, priority } = message;
-            const targetDocId = doctorId || 'doc-1';
-            console.log(`[Teleconsultation WS] Patient ${patientName || patientId} initiated call to Doctor: ${targetDocId}`);
+            const targetDocId = doctorId || 'all';
+            const targetDocName = doctorName || 'On-Duty Medical Officer';
+            console.log(`[Teleconsultation WS] Patient ${patientName || patientId} initiated call to Doctor: ${targetDocName} (${targetDocId})`);
 
             const sessionInfo: ActiveCallInfo = {
               sessionId,
               patientId,
               doctorId: targetDocId,
-              doctorName: doctorName || 'Dr. Ankit Sharma (PHC Medical Officer)',
+              doctorName: targetDocName,
               facilityName: facilityName || 'PHC Lunkaransar Tele-Clinic',
               createdAt: Date.now(),
               status: 'RINGING',

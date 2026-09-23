@@ -2238,6 +2238,14 @@ export async function getActiveTeleconsultationCall(patientId: string): Promise<
   return res?.data?.activeCall || null
 }
 
+export async function getActiveTeleconsultationCallForDoctor(doctorId?: string, doctorUserId?: string): Promise<any> {
+  const q = new URLSearchParams();
+  if (doctorId) q.set('doctorId', doctorId);
+  if (doctorUserId) q.set('doctorUserId', doctorUserId);
+  const res = await request<ApiResponse<any>>(`/teleconsultation/active-call?${q.toString()}`).catch(() => null);
+  return res?.data?.activeCall || null;
+}
+
 import { MCH_RECORDS, MCH_DUE_ITEMS } from '../data';
 
 export async function getMchDueList(params?: {
