@@ -497,12 +497,23 @@ export async function login(
     } = loginSchema.parse(req.body);
 
     const identifier = email.trim();
+    const cleanDigits = identifier.replace(/[^0-9]/g, '');
+    const tenDigits = cleanDigits.length >= 10 ? cleanDigits.slice(-10) : cleanDigits;
+
     const user =
       await prisma.user.findFirst({
         where: {
           OR: [
             { email: identifier.toLowerCase() },
             { phone: identifier },
+            ...(tenDigits
+              ? [
+                  { phone: tenDigits },
+                  { phone: `+91${tenDigits}` },
+                  { phone: `+91 ${tenDigits}` },
+                  { phone: { contains: tenDigits } },
+                ]
+              : []),
           ],
         },
 
@@ -524,7 +535,7 @@ export async function login(
       (!user.passwordHash && !user.pinHash)
     ) {
       throw new AppError(
-        'Invalid email or password.',
+        'Invalid email/phone or password.',
         401
       );
     }
@@ -555,7 +566,7 @@ export async function login(
 
     if (user.role !== role) {
       throw new AppError(
-        `User exists but does not have the '${role}' role.`,
+        `This account is registered as '${user.role}'. Please select the '${user.role}' card on the login screen.`,
         403
       );
     }

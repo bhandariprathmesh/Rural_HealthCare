@@ -1075,24 +1075,17 @@ export default function LoginScreen({
                         htmlFor="login-email"
                         className="text-xs font-medium text-gray-700 block mb-1"
                       >
-                        Email Address
+                        {lang === 'hi' ? 'ईमेल पता या मोबाइल नंबर' : 'Email Address or Mobile Number'}
                       </label>
 
                       <input
                         id="login-email"
                         name="email"
-                        type="email"
+                        type="text"
                         autoComplete="username"
-                        value={
-                          loginEmail
-                        }
-                        onChange={(e) =>
-                          setLoginEmail(
-                            e.target
-                              .value
-                          )
-                        }
-                        placeholder="name@example.com"
+                        value={loginEmail}
+                        onChange={(e) => setLoginEmail(e.target.value)}
+                        placeholder={lang === 'hi' ? 'ईमेल या 10 अंकों का मोबाइल नंबर' : 'name@example.com or 10-digit mobile'}
                         required
                         className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
                       />
