@@ -1,4 +1,16 @@
 {
+  "redirects": [
+    {
+      "source": "/download-apk",
+      "destination": "https://media.githubusercontent.com/media/bhandariprathmesh/Rural_HealthCare/main/RuralCare_v1.0.apk",
+      "permanent": false
+    },
+    {
+      "source": "/downloads/RuralCare_v1.0.apk",
+      "destination": "https://media.githubusercontent.com/media/bhandariprathmesh/Rural_HealthCare/main/RuralCare_v1.0.apk",
+      "permanent": false
+    }
+  ],
   "rewrites": [
     {
       "source": "/(.*)",
